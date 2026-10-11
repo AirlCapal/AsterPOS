@@ -9,6 +9,7 @@ import {
 import ReceiptPrinter from './ReceiptPrinter';
 import SalesReportGenerator from './SalesReportGenerator';
 import { downloadOrShareFile } from '../utils/fileDownloader';
+import cloudSyncService from '../services/cloudSyncService';
 
 // --- Confirm Dialog ---
 const ConfirmDialog = ({ isOpen, title, message, onConfirm, onCancel, variant = 'primary' }) => {
@@ -737,6 +738,7 @@ export default function SalesHistory({ currentUser }) {
 
       setVoidTarget(null);
       flash(`Order #${voidTarget.id} has been voided successfully`);
+      try { cloudSyncService.triggerAutoSync(); } catch {}
     } catch (err) {
       flash('Failed to void order. Please try again.', 'error');
     }

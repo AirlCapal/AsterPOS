@@ -236,6 +236,42 @@ db.version(11).stores({
   });
 });
 
+// v12: Manager Web Credentials & Auto Cloud Sync
+db.version(12).stores({
+  users: '++id, name, username, pin, role, is_active, email, phone_number, otp_delivery_preference',
+  products: '++id, name, category, price, isAvailable',
+  ingredients: '++id, sku, name, unit, currentStock, safetyThreshold, costPerUnit, supplier',
+  recipes: '++id, productId',
+  orders: '++id, timestamp, cashierId, total, paymentMethod, status',
+  transactions: '++id, orderId, timestamp, type, amount',
+  app_settings: 'id',
+  payment_qr_codes: '++id, methodName',
+  audit_logs: '++id, timestamp, actionType, itemName, cashierId, approvingManagerId, auth_type',
+  categories: '++id, name, status, sort_order',
+  cancelled_orders_log: '++id, order_id, timestamp',
+  shift_closings: '++id, cashierId, timestamp, date',
+  shift_sessions: '++id, cashierId, clockIn, clockOut, openingFloat, closingCash, status',
+  cash_payouts: '++id, shiftId, managerId, type, amount, description, timestamp',
+  customers: '++id, phone, name, visits, totalSpend, points',
+  parked_orders: '++id, name, timestamp',
+  timecards: '++id, userId, clockIn, clockOut, totalHours',
+  employee_payroll: '++id, userId, payPeriod, totalHours, grossPay',
+  inventory_adjustments: '++id, ingredientId, timestamp, type, delta, reason, managerId'
+}).upgrade(tx => {
+  tx.table('users').toCollection().modify(user => {
+    if (user.username === undefined) {
+      if (user.role === 'super_admin') user.username = 'admin';
+      else if (user.role === 'manager') user.username = 'manager';
+      else user.username = '';
+    }
+    if (user.password === undefined) {
+      if (user.role === 'super_admin') user.password = 'admin123';
+      else if (user.role === 'manager') user.password = 'manager123';
+      else user.password = '';
+    }
+  });
+});
+
 // Role hierarchy helper: higher number = more privilege
 export const ROLE_LEVELS = {
   cashier: 1,
@@ -260,6 +296,8 @@ export const initializeDefaultData = async () => {
     await db.users.bulkAdd([
       {
         name: 'Super Admin',
+        username: 'admin',
+        password: 'admin123',
         pin: '999900',
         role: 'super_admin',
         is_active: 1,
@@ -269,6 +307,8 @@ export const initializeDefaultData = async () => {
       },
       {
         name: 'Admin Manager',
+        username: 'manager',
+        password: 'manager123',
         pin: '123400',
         role: 'manager',
         is_active: 1,
@@ -278,6 +318,8 @@ export const initializeDefaultData = async () => {
       },
       {
         name: 'Front Desk',
+        username: '',
+        password: '',
         pin: '000000',
         role: 'cashier',
         is_active: 1,
@@ -287,6 +329,16 @@ export const initializeDefaultData = async () => {
       }
     ]);
   } else {
+    // Backfill manager usernames/passwords if empty
+    const superAdmin = await db.users.where('role').equals('super_admin').first();
+    if (superAdmin && !superAdmin.username) {
+      await db.users.update(superAdmin.id, { username: 'admin', password: superAdmin.password || 'admin123' });
+    }
+    const manager = await db.users.where('role').equals('manager').first();
+    if (manager && !manager.username) {
+      await db.users.update(manager.id, { username: 'manager', password: manager.password || 'manager123' });
+    }
+
     // Ensure at least one super_admin exists on upgrade
     const superAdmins = await db.users.where('role').equals('super_admin').count();
     if (superAdmins === 0) {

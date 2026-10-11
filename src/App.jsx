@@ -7,7 +7,7 @@ import {
   LayoutDashboard, UtensilsCrossed, Receipt, ShieldCheck, Search,
   ChevronUp, ChevronDown, BarChart3, Crown, Image as ImageIcon, ClipboardList, Clock,
   Croissant, Utensils, Tag, IceCream, User, Filter, Eye, EyeOff, Menu, LayoutGrid, LayoutList, CheckSquare,
-  Package, AlertTriangle, ShieldAlert, Network, HelpCircle
+  Package, AlertTriangle, ShieldAlert, Network, HelpCircle, RefreshCw
 } from 'lucide-react';
 import './index.css';
 import { useResponsive } from './hooks/useResponsive';
@@ -32,6 +32,9 @@ import SyncStatusBadge from './components/SyncStatusBadge';
 import OnboardingFlow from './components/OnboardingFlow';
 import NetworkSyncModule from './components/NetworkSyncModule';
 import CuteLoadingScreen from './components/CuteLoadingScreen';
+import ManagerWebLogin from './components/ManagerWebLogin';
+import cloudSyncService from './services/cloudSyncService';
+import { Capacitor } from '@capacitor/core';
 
 // --- Opening Float Modal ---
 const OpeningFloatModal = ({ isOpen, onConfirm, userName }) => {
@@ -539,6 +542,9 @@ const POSRegister = ({ currentUser, settings, syncBroadcast }) => {
     setDiscountType('None'); setDiscountId(''); setLoyaltyNumber(''); setTableNumber('');
     setShowRewardPrompt(false);
     setIsPaymentModalOpen(false); setMobileCartOpen(false);
+
+    // Auto-transmit new sale snapshot to Cloud Relay (Manager Website)
+    try { cloudSyncService.triggerAutoSync(); } catch {}
   };
 
 
@@ -1073,13 +1079,63 @@ export default function App() {
   const [isActivated, setIsActivated] = useState(() => localStorage.getItem('is_device_activated') === 'true');
   const [currentUser, setCurrentUser] = useState(null);
   const [theme, setTheme] = useState(() => localStorage.getItem('aster-theme') || 'theme-light');
-  const [activeTab, setActiveTab] = useState('pos');
+  // Platform & Portal Mode Detection
+  // Native Android APK defaults to 'pos', Web Browser (Vercel) defaults to 'manager_web'
+  const isNative = Capacitor.isNativePlatform();
+  const [portalMode, setPortalMode] = useState(() => {
+    const saved = localStorage.getItem('aster_portal_mode');
+    if (saved) return saved;
+    return isNative ? 'pos' : 'manager_web';
+  });
+
+  const [activeTab, setActiveTab] = useState(() => {
+    const savedMode = localStorage.getItem('aster_portal_mode');
+    const mode = savedMode || (Capacitor.isNativePlatform() ? 'pos' : 'manager_web');
+    return mode === 'manager_web' ? 'dashboard' : 'pos';
+  });
+
   const [showNavDrawer, setShowNavDrawer] = useState(false);
   const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false);
   const [openDrawerGroup, setOpenDrawerGroup] = useState('Register & Sales');
   const [showLockConfirm, setShowLockConfirm] = useState(false);
 
+  const togglePortalMode = (mode) => {
+    localStorage.setItem('aster_portal_mode', mode);
+    setPortalMode(mode);
+    if (mode === 'manager_web') {
+      setActiveTab('dashboard');
+    } else {
+      setActiveTab('pos');
+    }
+  };
 
+  // Cloud sync service state & auto-sync
+  const [cloudSyncState, setCloudSyncState] = useState({
+    isSyncing: false,
+    lastSyncTime: null,
+    lastSyncStatus: 'idle',
+    syncError: null
+  });
+
+  useEffect(() => {
+    cloudSyncService.init();
+    const unsub = cloudSyncService.subscribe(setCloudSyncState);
+    return () => {
+      cloudSyncService.destroy();
+      unsub();
+    };
+  }, []);
+
+  // When logged into Manager Web Portal, periodically pull fresh data from POS
+  useEffect(() => {
+    if (portalMode === 'manager_web' && currentUser) {
+      cloudSyncService.pullCloudData();
+      const pullInterval = setInterval(() => {
+        cloudSyncService.pullCloudData();
+      }, 30000);
+      return () => clearInterval(pullInterval);
+    }
+  }, [portalMode, currentUser]);
 
   // Onboarding: show automatically on first login per device
   // TODO(security): No sensitive data is stored in this flag.
@@ -1156,6 +1212,34 @@ export default function App() {
   }
 
   if (!currentUser) {
+    if (portalMode === 'manager_web') {
+      return (
+        <div className="h-screen bg-background relative">
+          <ManagerWebLogin
+            onLoginSuccess={async (user) => {
+              setCurrentUser(user);
+              setActiveTab('dashboard');
+              try { cloudSyncService.pullCloudData(); } catch {}
+            }}
+          />
+
+          {/* Quick toggle to Cashier POS mode */}
+          <div className="fixed bottom-3 right-3 z-[60]">
+            <button
+              onClick={() => togglePortalMode('pos')}
+              className="text-[11px] font-semibold bg-stone-900/80 hover:bg-stone-900 text-stone-300 hover:text-white px-3 py-1.5 rounded-lg backdrop-blur border border-white/10 shadow-lg transition-all"
+            >
+              Switch to Cashier POS (PIN Pad)
+            </button>
+          </div>
+
+          {isInitializing && (
+            <CuteLoadingScreen onFinished={() => setIsInitializing(false)} minDuration={10500} />
+          )}
+        </div>
+      );
+    }
+
     return (
       <div className="h-screen bg-background relative">
         <LockScreen onUnlock={async (user) => { 
@@ -1183,6 +1267,16 @@ export default function App() {
               });
            }
         }} />
+
+        {/* Quick toggle to Manager Web Portal */}
+        <div className="fixed bottom-3 right-3 z-[60]">
+          <button
+            onClick={() => togglePortalMode('manager_web')}
+            className="text-[11px] font-semibold bg-stone-900/80 hover:bg-stone-900 text-stone-300 hover:text-white px-3 py-1.5 rounded-lg backdrop-blur border border-white/10 shadow-lg transition-all"
+          >
+            Manager Portal (Username/Password)
+          </button>
+        </div>
 
         {isInitializing && (
           <CuteLoadingScreen onFinished={() => setIsInitializing(false)} minDuration={10500} />
@@ -1224,6 +1318,10 @@ export default function App() {
   ];
 
   const visibleTabs = tabs.filter(t => {
+    // When viewing on Manager Web Portal: omit cashier-only register & shift report
+    if (portalMode === 'manager_web' && (t.id === 'pos' || t.id === 'shift')) {
+      return false;
+    }
     // Admin tab is always restricted to super_admin only
     if (t.id === 'admin') return hasMinRole(currentUser.role, t.minRole);
     // Check module map — if a module is explicitly enabled for the role, allow access
@@ -1289,6 +1387,25 @@ export default function App() {
         </div>
 
         <div className="flex items-center gap-2 sm:gap-3">
+          {/* Cloud Sync Relay Status & Pull Button */}
+          {portalMode === 'manager_web' && (
+            <button
+              onClick={() => cloudSyncService.pullCloudData()}
+              disabled={cloudSyncState.isSyncing}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all ${
+                cloudSyncState.isSyncing
+                  ? 'bg-amber-500/10 border-amber-500/30 text-amber-500 animate-pulse'
+                  : 'bg-emerald-500/10 border-emerald-500/20 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/20'
+              }`}
+              title="Pull latest live data from POS"
+            >
+              <RefreshCw size={14} className={cloudSyncState.isSyncing ? 'animate-spin' : ''} />
+              <span className="hidden sm:inline">
+                {cloudSyncState.isSyncing ? 'Syncing...' : 'Sync POS Data'}
+              </span>
+            </button>
+          )}
+
           {/* Wi-Fi Sync Status Badge */}
           <SyncStatusBadge
             status={syncState.status}

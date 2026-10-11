@@ -4,7 +4,7 @@ import { db, ROLE_LABELS } from '../db';
 import {
   Save, Users, Store, Trash2, UserPlus, Shield, AlertTriangle,
   Upload, Image as ImageIcon, QrCode, X, Eye, EyeOff, Crown,
-  Download, DatabaseBackup, RotateCcw, Check, Edit2, KeyRound, Layers, Power, PowerOff, ToggleLeft, ToggleRight,
+  Download, DatabaseBackup, RotateCcw, Check, Edit2, KeyRound, Key, Layers, Power, PowerOff, ToggleLeft, ToggleRight,
   Receipt, Lock, Monitor, Mail, MessageSquare, Send, Copy, ExternalLink, CheckCircle2,
   LayoutDashboard, ClipboardList, BarChart3, Package, UtensilsCrossed, Network, Settings as SettingsGear, User as UserIcon, Wifi
 } from 'lucide-react';
@@ -103,6 +103,8 @@ export default function SuperAdminSettings({ currentUser }) {
   const [editingUser, setEditingUser] = useState(null);
   const [newUser, setNewUser] = useState({
     name: '',
+    username: '',
+    password: '',
     pin: '',
     role: 'cashier',
     email: '',
@@ -259,6 +261,8 @@ export default function SuperAdminSettings({ currentUser }) {
       closeConfirm();
       await db.users.add({
         name: newUser.name.trim(),
+        username: (newUser.username || newUser.name.replace(/\s+/g, '').toLowerCase()).trim(),
+        password: (newUser.password || newUser.pin).trim(),
         pin: newUser.pin,
         role: newUser.role,
         email: (newUser.email || '').trim(),
@@ -268,6 +272,8 @@ export default function SuperAdminSettings({ currentUser }) {
       });
       setNewUser({
         name: '',
+        username: '',
+        password: '',
         pin: '',
         role: 'cashier',
         email: '',
@@ -309,6 +315,8 @@ export default function SuperAdminSettings({ currentUser }) {
     setEditingUser({
       ...user,
       newPin: user.pin || '',
+      username: user.username || '',
+      password: user.password || '',
       email: user.email || '',
       phone_number: user.phone_number || '',
       otp_delivery_preference: user.otp_delivery_preference || 'BOTH'
@@ -336,6 +344,8 @@ export default function SuperAdminSettings({ currentUser }) {
       closeConfirm();
       const updates = {
         name: editingUser.name.trim(),
+        username: (editingUser.username || '').trim(),
+        password: (editingUser.password || '').trim(),
         email: (editingUser.email || '').trim(),
         phone_number: (editingUser.phone_number || '').trim(),
         otp_delivery_preference: editingUser.otp_delivery_preference || 'BOTH'
@@ -1125,6 +1135,42 @@ function doGet(e) {
                     </select>
                   </div>
 
+                  {/* Manager Web Portal Credentials (Username & Password for Website) */}
+                  {(newUser.role === 'manager' || newUser.role === 'super_admin') && (
+                    <div className="p-3.5 bg-amber-500/10 border border-amber-500/25 rounded-xl space-y-2.5">
+                      <p className="text-xs font-bold text-amber-700 dark:text-amber-400 flex items-center gap-1.5">
+                        <Key size={14} /> Website Login Credentials (For Manager Web Portal)
+                      </p>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                        <div>
+                          <label className="block text-[11px] font-semibold text-text-light mb-1">
+                            Web Username
+                          </label>
+                          <input
+                            type="text"
+                            placeholder="e.g. manager1"
+                            value={newUser.username}
+                            onChange={e => setNewUser({ ...newUser, username: e.target.value })}
+                            className="min-h-[40px] w-full px-3 bg-background border border-border rounded-lg text-xs text-text-main"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[11px] font-semibold text-text-light mb-1">
+                            Web Password
+                          </label>
+                          <input
+                            type="text"
+                            placeholder="e.g. secret123"
+                            value={newUser.password}
+                            onChange={e => setNewUser({ ...newUser, password: e.target.value })}
+                            className="min-h-[40px] w-full px-3 bg-background border border-border rounded-lg text-xs text-text-main"
+                          />
+                        </div>
+                      </div>
+                      <p className="text-[10px] text-text-light">Used to log in to the Manager Web Portal (not numeric PIN).</p>
+                    </div>
+                  )}
+
                   {/* Contact fields for all roles (mandatory for manager/super_admin, optional for cashier) */}
                   <div className="p-3.5 bg-primary/5 border border-primary/20 rounded-xl space-y-2.5">
                     <p className="text-xs font-bold text-primary flex items-center gap-1.5">
@@ -1218,6 +1264,42 @@ function doGet(e) {
                         inputMode="numeric"
                       />
                     </div>
+
+                    {/* Manager Web Portal Credentials */}
+                    {(editingUser.role === 'manager' || editingUser.role === 'super_admin') && (
+                      <div className="p-3.5 bg-amber-500/10 border border-amber-500/25 rounded-xl space-y-2.5">
+                        <p className="text-xs font-bold text-amber-700 dark:text-amber-400 flex items-center gap-1.5">
+                          <Key size={14} /> Website Login Credentials (For Manager Web Portal)
+                        </p>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                          <div>
+                            <label className="block text-[11px] font-semibold text-text-light mb-1">
+                              Web Username
+                            </label>
+                            <input
+                              type="text"
+                              placeholder="e.g. manager1"
+                              value={editingUser.username || ''}
+                              onChange={e => setEditingUser({ ...editingUser, username: e.target.value })}
+                              className="min-h-[40px] w-full px-3 bg-background border border-border rounded-lg text-xs text-text-main"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-[11px] font-semibold text-text-light mb-1">
+                              Web Password
+                            </label>
+                            <input
+                              type="text"
+                              placeholder="e.g. secret123"
+                              value={editingUser.password || ''}
+                              onChange={e => setEditingUser({ ...editingUser, password: e.target.value })}
+                              className="min-h-[40px] w-full px-3 bg-background border border-border rounded-lg text-xs text-text-main"
+                            />
+                          </div>
+                        </div>
+                        <p className="text-[10px] text-text-light">Used to log in to the Manager Web Portal (not numeric PIN).</p>
+                      </div>
+                    )}
 
                     <div className="p-3.5 bg-primary/5 border border-primary/20 rounded-xl space-y-3">
                       <p className="text-xs font-bold text-primary flex items-center gap-1.5">
