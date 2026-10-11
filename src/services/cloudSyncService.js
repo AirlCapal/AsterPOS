@@ -1,13 +1,13 @@
 /**
- * CloudSyncService — Automatic background synchronization between Aster POS and Manager Web Portal.
+ * CloudSyncService — Robust Two-Way Automatic Synchronization between Aster POS and Manager Web Portal.
  * 
  * Works 100% free via Google Apps Script (Web App endpoint):
- *   1. Automatic Transmission: When the POS is online, transactions, stock adjustments, 
- *      and register summaries are batched and dispatched to the Cloud Sync endpoint.
- *   2. Manager Web Portal: Polls / pulls snapshots and transactions from the cloud endpoint
- *      so managers see live data from anywhere in the world on Vercel without needing local Wi-Fi.
- *   3. Offline Resilience: If the POS loses internet, mutations queue up locally and 
- *      auto-transmit as soon as connectivity resumes.
+ *   1. POS -> Website: When the POS tablet is online, completed sales, register summaries,
+ *      and inventory deductions are pushed to the Cloud Relay so managers see live data.
+ *   2. Website -> POS: When managers edit products, prices, categories, inventory stock,
+ *      staff accounts, or store settings from the website, changes are pushed to the Cloud Relay.
+ *      As soon as the POS tablet has an internet connection (via Wi-Fi or mobile data), it
+ *      automatically pulls and applies the manager's edits into its local database in real time!
  */
 
 import { Capacitor } from '@capacitor/core';
@@ -24,6 +24,8 @@ class CloudSyncService {
     this.lastSyncStatus = 'idle'; // 'idle' | 'syncing' | 'synced' | 'offline' | 'error'
     this.syncError = null;
     this.networkListener = null;
+    this.lastWebPushTime = null;
+    this.isWebAutoPublishing = false;
   }
 
   async init() {
@@ -34,8 +36,8 @@ class CloudSyncService {
       this.networkListener = await Network.addListener('networkStatusChange', async (status) => {
         console.log('[CloudSyncService] Wi-Fi / Network status changed:', status);
         if (status.connected) {
-          // As soon as POS connects to Wi-Fi, automatically transmit all data!
-          await this.triggerAutoSync();
+          // As soon as POS connects to Wi-Fi, pull any manager web edits and transmit POS data!
+          await this.syncAll();
         } else {
           this.lastSyncStatus = 'offline';
           this.notify();
@@ -45,7 +47,7 @@ class CloudSyncService {
       // Immediate check on startup
       const initialStatus = await Network.getStatus();
       if (initialStatus?.connected) {
-        this.triggerAutoSync();
+        this.syncAll();
       }
     } catch (e) {
       console.warn('[CloudSyncService] Capacitor Network listener setup notice:', e);
@@ -53,18 +55,18 @@ class CloudSyncService {
 
     // 2. Web browser online / offline listeners
     window.addEventListener('online', () => {
-      this.triggerAutoSync();
+      this.syncAll();
     });
     window.addEventListener('offline', () => {
       this.lastSyncStatus = 'offline';
       this.notify();
     });
 
-    // 3. Background periodic sync every 20 seconds
+    // 3. Background periodic sync every 15 seconds
     if (!this.syncTimer) {
       this.syncTimer = setInterval(() => {
-        this.triggerAutoSync();
-      }, 20000);
+        this.syncAll();
+      }, 15000);
     }
   }
 
@@ -89,7 +91,8 @@ class CloudSyncService {
       isSyncing: this.isSyncing,
       lastSyncTime: this.lastSyncTime,
       lastSyncStatus: this.lastSyncStatus,
-      syncError: this.syncError
+      syncError: this.syncError,
+      lastWebPushTime: this.lastWebPushTime
     };
     this.listeners.forEach(cb => {
       try { cb(state); } catch {}
@@ -97,9 +100,26 @@ class CloudSyncService {
   }
 
   /**
-   * Builds the latest state payload to transmit to the cloud
+   * Unified sync: pulls remote updates and pushes local data depending on context
    */
-  async buildCloudPayload() {
+  async syncAll() {
+    if (this.isSyncing) return;
+    const isWeb = typeof window !== 'undefined' && localStorage.getItem('aster_portal_mode') === 'manager_web';
+    
+    if (isWeb) {
+      // Manager Website: pull POS sales data
+      await this.pullCloudData();
+    } else {
+      // Cashier POS Tablet: check for Manager edits first, then push POS sales
+      await this.checkAndApplyManagerUpdates();
+      await this.triggerAutoSync();
+    }
+  }
+
+  /**
+   * Builds the latest state payload to transmit from POS to Cloud Relay
+   */
+  async buildCloudPayload(source = 'POS') {
     const todayStart = new Date();
     todayStart.setHours(0, 0, 0, 0);
     const todayMs = todayStart.getTime();
@@ -121,6 +141,7 @@ class CloudSyncService {
 
     return {
       action: 'PUSH_SYNC_DATA',
+      source: source,
       timestamp: Date.now(),
       summary: {
         totalRevenue,
@@ -190,7 +211,7 @@ class CloudSyncService {
         return;
       }
 
-      const payload = await this.buildCloudPayload();
+      const payload = await this.buildCloudPayload('POS');
 
       // Transmit to Google Apps Script
       await fetch(scriptUrl, {
@@ -211,6 +232,144 @@ class CloudSyncService {
     } finally {
       this.isSyncing = false;
       this.notify();
+    }
+  }
+
+  /**
+   * MANAGER WEBSITE -> CLOUD: Pushes edits made by Manager (menu, prices, inventory, staff, settings)
+   */
+  async pushWebChanges() {
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      throw new Error('You are currently offline. Connect to internet to push edits to POS.');
+    }
+
+    try {
+      this.isSyncing = true;
+      this.lastSyncStatus = 'syncing';
+      this.notify();
+
+      const settings = await db.app_settings.get('default');
+      const scriptUrl = settings?.googleAppsScriptUrl?.trim() || DEFAULT_GOOGLE_SCRIPT_URL;
+      if (!scriptUrl) throw new Error('Google Apps Script URL is not configured');
+
+      const payload = await this.buildCloudPayload('WEB');
+      payload.action = 'PUSH_WEB_UPDATE';
+
+      await fetch(scriptUrl, {
+        method: 'POST',
+        mode: 'no-cors',
+        headers: {
+          'Content-Type': 'text/plain;charset=utf-8'
+        },
+        body: JSON.stringify(payload)
+      });
+
+      this.lastWebPushTime = Date.now();
+      this.lastSyncTime = Date.now();
+      this.lastSyncStatus = 'synced';
+      return { success: true, timestamp: this.lastWebPushTime };
+    } catch (err) {
+      console.warn('[CloudSyncService] Web push error:', err);
+      this.lastSyncStatus = 'error';
+      this.syncError = err.message;
+      throw err;
+    } finally {
+      this.isSyncing = false;
+      this.notify();
+    }
+  }
+
+  /**
+   * POS TABLET -> CLOUD: Checks if the Manager edited any data from the website,
+   * and automatically applies the updates directly into the POS local database!
+   */
+  async checkAndApplyManagerUpdates() {
+    try {
+      const settings = await db.app_settings.get('default');
+      const scriptUrl = settings?.googleAppsScriptUrl?.trim() || DEFAULT_GOOGLE_SCRIPT_URL;
+      if (!scriptUrl) return false;
+
+      const res = await fetch(`${scriptUrl}?action=GET_SYNC_DATA&t=${Date.now()}`);
+      if (!res.ok) return false;
+      const data = await res.json();
+
+      if (!data || !data.success || !data.snapshot) return false;
+
+      // Only apply if the snapshot came from WEB and is newer than last applied
+      const isFromWeb = data.source === 'WEB';
+      const mutationTs = data.mutationTimestamp || data.snapshot.timestamp || 0;
+      const lastAppliedTs = parseInt(localStorage.getItem('last_applied_web_ts') || '0', 10);
+
+      if (isFromWeb && mutationTs > lastAppliedTs) {
+        console.log('[CloudSyncService] New updates from Manager Web detected! Applying to POS database...');
+        const s = data.snapshot;
+
+        await db.transaction('rw', [db.products, db.ingredients, db.categories, db.users, db.app_settings], async () => {
+          // 1. Sync Products & Prices
+          if (Array.isArray(s.products)) {
+            const remoteProductIds = new Set(s.products.map(p => p.id));
+            const localProducts = await db.products.toArray();
+            for (const lp of localProducts) {
+              if (!remoteProductIds.has(lp.id)) {
+                await db.products.delete(lp.id);
+              }
+            }
+            for (const p of s.products) {
+              await db.products.put(p);
+            }
+          }
+
+          // 2. Sync Categories
+          if (Array.isArray(s.categories)) {
+            const remoteCatIds = new Set(s.categories.map(c => c.id));
+            const localCats = await db.categories.toArray();
+            for (const lc of localCats) {
+              if (!remoteCatIds.has(lc.id)) {
+                await db.categories.delete(lc.id);
+              }
+            }
+            for (const c of s.categories) {
+              await db.categories.put(c);
+            }
+          }
+
+          // 3. Sync Ingredients & Stocks
+          if (Array.isArray(s.ingredients)) {
+            for (const ing of s.ingredients) {
+              await db.ingredients.put(ing);
+            }
+          }
+
+          // 4. Sync Users / Staff (PINs, Web Passwords, Roles)
+          if (Array.isArray(s.users)) {
+            for (const u of s.users) {
+              await db.users.put(u);
+            }
+          }
+
+          // 5. Sync Settings
+          if (s.settings && typeof s.settings === 'object') {
+            await db.app_settings.put({ ...s.settings, id: 'default' });
+          }
+        });
+
+        localStorage.setItem('last_applied_web_ts', mutationTs.toString());
+        this.lastSyncTime = Date.now();
+        this.lastSyncStatus = 'synced';
+        this.notify();
+
+        // Dispatch notification event for the POS user interface
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('manager-remote-update-applied', {
+            detail: { timestamp: mutationTs }
+          }));
+        }
+        return true;
+      }
+      return false;
+    } catch (err) {
+      console.warn('[CloudSyncService] checkAndApplyManagerUpdates warning:', err);
+      return false;
     }
   }
 

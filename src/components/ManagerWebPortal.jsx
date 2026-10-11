@@ -20,12 +20,32 @@ import AccountSettings from './AccountSettings';
 export default function ManagerWebPortal({ currentUser, onLogout, theme, setTheme, onSwitchToPos }) {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [isPushingToPos, setIsPushingToPos] = useState(false);
+  const [toastMsg, setToastMsg] = useState('');
   const [cloudSyncState, setCloudSyncState] = useState({
     isSyncing: false,
     lastSyncTime: null,
     lastSyncStatus: 'idle',
-    syncError: null
+    syncError: null,
+    lastWebPushTime: null
   });
+
+  const showToast = (msg) => {
+    setToastMsg(msg);
+    setTimeout(() => setToastMsg(''), 4000);
+  };
+
+  const handlePushToPos = async () => {
+    setIsPushingToPos(true);
+    try {
+      await cloudSyncService.pushWebChanges();
+      showToast('✓ Successfully pushed to POS! Once connected to Wi-Fi, the POS app will automatically apply your edits.');
+    } catch (err) {
+      showToast(`Push failed: ${err.message}`);
+    } finally {
+      setIsPushingToPos(false);
+    }
+  };
 
   const settings = useLiveQuery(() => db.app_settings.get('default')) || {};
   const orders = useLiveQuery(() => db.orders.toArray()) || [];
@@ -247,15 +267,26 @@ export default function ManagerWebPortal({ currentUser, onLogout, theme, setThem
               </span>
             </div>
 
+            {/* Push Changes to POS Button */}
+            <button
+              onClick={handlePushToPos}
+              disabled={isPushingToPos}
+              className="flex items-center gap-1.5 px-3.5 py-1.5 bg-primary hover:bg-primary-dark text-white rounded-xl text-xs font-bold transition-all shadow-md shadow-primary/20 active:scale-95 disabled:opacity-50"
+              title="Transmit current menu, prices, stocks & staff to the POS app"
+            >
+              <RefreshCw size={14} className={isPushingToPos ? 'animate-spin' : ''} />
+              <span>{isPushingToPos ? 'Pushing to POS...' : 'Push Edits to POS'}</span>
+            </button>
+
             {/* Quick Manual Sync Button */}
             <button
               onClick={() => cloudSyncService.pullCloudData()}
               disabled={cloudSyncState.isSyncing}
               className="flex items-center gap-1.5 px-3 py-1.5 bg-surface-hover hover:bg-border text-text-main border border-border rounded-xl text-xs font-semibold transition-all"
-              title="Refresh live data from POS"
+              title="Refresh live sales data from POS"
             >
               <RefreshCw size={14} className={cloudSyncState.isSyncing ? 'animate-spin text-amber-500' : ''} />
-              <span className="hidden sm:inline">Sync POS</span>
+              <span className="hidden sm:inline">Fetch Sales</span>
             </button>
 
             {/* Theme Toggle */}
@@ -286,7 +317,14 @@ export default function ManagerWebPortal({ currentUser, onLogout, theme, setThem
         </header>
 
         {/* Viewport Content */}
-        <main className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8 bg-background">
+        <main className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8 bg-background relative">
+          {/* Floating Toast Notification */}
+          {toastMsg && (
+            <div className="fixed top-20 right-6 z-50 bg-emerald-600 text-white px-4 py-2.5 rounded-xl shadow-xl text-xs font-semibold flex items-center gap-2 animate-in slide-in-from-top-2">
+              <span>{toastMsg}</span>
+            </div>
+          )}
+
           <div className="max-w-7xl mx-auto h-full">
             {activeTab === 'dashboard' && <Dashboard />}
             {activeTab === 'sales' && <SalesHistory currentUser={currentUser} />}

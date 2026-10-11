@@ -1118,12 +1118,22 @@ export default function App() {
     syncError: null
   });
 
+  const [posRemoteUpdateToast, setPosRemoteUpdateToast] = useState(false);
+
   useEffect(() => {
     cloudSyncService.init();
     const unsub = cloudSyncService.subscribe(setCloudSyncState);
+
+    const handleRemoteUpdate = () => {
+      setPosRemoteUpdateToast(true);
+      setTimeout(() => setPosRemoteUpdateToast(false), 5000);
+    };
+    window.addEventListener('manager-remote-update-applied', handleRemoteUpdate);
+
     return () => {
       cloudSyncService.destroy();
       unsub();
+      window.removeEventListener('manager-remote-update-applied', handleRemoteUpdate);
     };
   }, []);
 
@@ -1361,7 +1371,14 @@ export default function App() {
   const headerLogo = settings?.logoDataUrl;
 
   return (
-    <div className="flex flex-col h-screen bg-background text-text-main">
+    <div className="flex flex-col h-screen bg-background text-text-main relative">
+      {/* Remote update notification banner */}
+      {posRemoteUpdateToast && (
+        <div className="fixed top-3 left-1/2 -translate-x-1/2 z-[70] bg-emerald-600 text-white px-5 py-2.5 rounded-xl shadow-2xl text-xs font-bold flex items-center gap-2 animate-in slide-in-from-top-3 border border-emerald-400/40">
+          <span className="w-2 h-2 rounded-full bg-white animate-pulse" />
+          <span>Menu, prices &amp; inventory updated by Manager from website ✓</span>
+        </div>
+      )}
 
       {/* Header - Desktop & Mobile Responsive */}
       <header className="min-h-[56px] md:min-h-[64px] bg-surface border-b border-border flex flex-wrap md:flex-nowrap items-center justify-between px-3 md:px-5 lg:px-6 shadow-sm z-20 relative safe-top flex-shrink-0 gap-y-2 py-2">

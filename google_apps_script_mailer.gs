@@ -1,19 +1,22 @@
 /**
- * Aster POS - Free Cloud Relay & OTP Mailer (Google Apps Script)
- * -------------------------------------------------------------------
- * This Google Apps Script acts as both:
- *  1. Free Gmail OTP Sender (Email verification / manager override)
- *  2. Free Cloud Sync Relay (Transmits POS sales, stock & menu data to the Manager Web Portal)
+ * Aster POS - Two-Way Free Cloud Relay & OTP Mailer (Google Apps Script)
+ * -------------------------------------------------------------------------
+ * This Google Apps Script powers:
+ *  1. Free Gmail OTP Sender (Manager override & password recovery)
+ *  2. Full Two-Way Synchronization:
+ *     - POS -> Web: Transmits cashier orders, shift totals, and sales in real time.
+ *     - Web -> POS: When managers edit products, prices, categories, ingredients,
+ *                   staff, or settings on the website, changes are automatically
+ *                   transmitted down to the POS app whenever it has an internet connection.
  * 
  * 100% Free - Runs on Google Apps Script with zero server or subscription costs.
  * 
  * INSTRUCTIONS TO UPDATE / DEPLOY:
  * 1. Go to https://script.google.com while signed in to airlunacreations@gmail.com
- * 2. Open your "Aster POS OTP Mailer" project (or create a new project)
+ * 2. Open your "Aster POS OTP Mailer" project
  * 3. Replace all code in Code.gs with this script
  * 4. Click "Deploy" > "Manage deployments" > Edit (pencil icon) > Version: "New version" > Deploy
  *    (Ensure "Execute as: Me" and "Who has access: Anyone")
- * 5. If creating a new deployment, copy the Web App URL and paste it in Aster POS Settings.
  */
 
 function doPost(e) {
@@ -22,15 +25,21 @@ function doPost(e) {
     var data = JSON.parse(raw);
 
     // -------------------------------------------------------------
-    // ACTION 1: CLOUD DATA SYNC (POS -> Manager Website)
+    // ACTION 1: TWO-WAY CLOUD DATA SYNC (POS <-> Manager Website)
     // -------------------------------------------------------------
-    if (data.action === "PUSH_SYNC_DATA") {
-      saveSnapshot(JSON.stringify(data));
+    if (data.action === "PUSH_SYNC_DATA" || data.action === "PUSH_WEB_UPDATE") {
+      var source = data.source || (data.action === "PUSH_WEB_UPDATE" ? "WEB" : "POS");
+      var timestamp = data.timestamp || Date.now();
+
+      saveSnapshot(JSON.stringify(data), source, timestamp);
+
       return ContentService
         .createTextOutput(JSON.stringify({ 
           success: true, 
-          message: "POS snapshot successfully synced to cloud", 
-          syncedAt: new Date().toISOString() 
+          message: "Data snapshot successfully synced (" + source + ")", 
+          source: source,
+          syncedAt: new Date().toISOString(),
+          timestamp: timestamp
         }))
         .setMimeType(ContentService.MimeType.JSON);
     }
@@ -94,16 +103,20 @@ function doGet(e) {
   try {
     var params = e ? e.parameter : {};
     
-    // Fetch snapshot for Manager Website
+    // Fetch snapshot for Web or POS
     if (params && params.action === "GET_SYNC_DATA") {
       var snapshot = loadSnapshot();
       var props = PropertiesService.getScriptProperties();
       var updatedAt = props.getProperty("UPDATED_AT") || null;
+      var lastSource = props.getProperty("LAST_SOURCE") || "POS";
+      var mutationTimestamp = parseInt(props.getProperty("LAST_MUTATION_TS") || "0", 10);
 
       return ContentService
         .createTextOutput(JSON.stringify({ 
           success: true, 
           snapshot: snapshot, 
+          source: lastSource,
+          mutationTimestamp: mutationTimestamp,
           updatedAt: updatedAt 
         }))
         .setMimeType(ContentService.MimeType.JSON);
@@ -112,7 +125,7 @@ function doGet(e) {
     return ContentService
       .createTextOutput(JSON.stringify({ 
         status: "active", 
-        service: "Aster POS Cloud Relay & OTP Service", 
+        service: "Aster POS Two-Way Cloud Relay & OTP Service", 
         poweredBy: "AirLuna Creations" 
       }))
       .setMimeType(ContentService.MimeType.JSON);
@@ -126,7 +139,7 @@ function doGet(e) {
 /**
  * Storage Helpers using ScriptProperties (Chunked for payload sizes > 9KB)
  */
-function saveSnapshot(snapshotJson) {
+function saveSnapshot(snapshotJson, source, timestamp) {
   var props = PropertiesService.getScriptProperties();
   
   // Clear existing chunks
@@ -139,6 +152,8 @@ function saveSnapshot(snapshotJson) {
   var count = Math.ceil(snapshotJson.length / chunkSize);
   props.setProperty("CHUNK_COUNT", count.toString());
   props.setProperty("UPDATED_AT", new Date().toISOString());
+  props.setProperty("LAST_SOURCE", source || "POS");
+  props.setProperty("LAST_MUTATION_TS", (timestamp || Date.now()).toString());
 
   for (var j = 0; j < count; j++) {
     props.setProperty("CHUNK_" + j, snapshotJson.substring(j * chunkSize, (j + 1) * chunkSize));
