@@ -33,6 +33,7 @@ import OnboardingFlow from './components/OnboardingFlow';
 import NetworkSyncModule from './components/NetworkSyncModule';
 import CuteLoadingScreen from './components/CuteLoadingScreen';
 import ManagerWebLogin from './components/ManagerWebLogin';
+import ManagerWebPortal from './components/ManagerWebPortal';
 import cloudSyncService from './services/cloudSyncService';
 import { Capacitor } from '@capacitor/core';
 
@@ -1200,7 +1201,8 @@ export default function App() {
     localStorage.setItem('aster-theme', theme);
   }, [theme]);
 
-  if (!isActivated) {
+  // On website (manager_web), completely remove and bypass the activation / installation key screen!
+  if (!isActivated && portalMode !== 'manager_web') {
     return (
       <ActivationScreen 
         onActivate={() => {
@@ -1282,6 +1284,19 @@ export default function App() {
           <CuteLoadingScreen onFinished={() => setIsInitializing(false)} minDuration={10500} />
         )}
       </div>
+    );
+  }
+
+  // Dedicated Executive Web Interface for Managers & Store Owners (Vercel Website)
+  if (portalMode === 'manager_web') {
+    return (
+      <ManagerWebPortal
+        currentUser={currentUser}
+        onLogout={() => setCurrentUser(null)}
+        theme={theme}
+        setTheme={setTheme}
+        onSwitchToPos={() => togglePortalMode('pos')}
+      />
     );
   }
 
@@ -1387,24 +1402,19 @@ export default function App() {
         </div>
 
         <div className="flex items-center gap-2 sm:gap-3">
-          {/* Cloud Sync Relay Status & Pull Button */}
-          {portalMode === 'manager_web' && (
-            <button
-              onClick={() => cloudSyncService.pullCloudData()}
-              disabled={cloudSyncState.isSyncing}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all ${
-                cloudSyncState.isSyncing
-                  ? 'bg-amber-500/10 border-amber-500/30 text-amber-500 animate-pulse'
-                  : 'bg-emerald-500/10 border-emerald-500/20 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/20'
-              }`}
-              title="Pull latest live data from POS"
-            >
-              <RefreshCw size={14} className={cloudSyncState.isSyncing ? 'animate-spin' : ''} />
-              <span className="hidden sm:inline">
-                {cloudSyncState.isSyncing ? 'Syncing...' : 'Sync POS Data'}
-              </span>
-            </button>
-          )}
+          {/* Cloud Auto-Transmission Status Badge on POS terminal */}
+          <div className="flex items-center gap-1.5 px-2.5 py-1.5 bg-surface-hover border border-border rounded-xl text-xs font-medium" title="Automatic Cloud Transmission to Manager Website">
+            <span className={`w-2 h-2 rounded-full ${
+              cloudSyncState.isSyncing 
+                ? 'bg-amber-500 animate-ping' 
+                : (cloudSyncState.lastSyncStatus === 'offline' ? 'bg-zinc-400' : 'bg-emerald-500')
+            }`} />
+            <span className="text-[11px] text-text-light font-semibold hidden sm:inline">
+              {cloudSyncState.isSyncing 
+                ? 'Transmitting to Web...' 
+                : (cloudSyncState.lastSyncStatus === 'offline' ? 'Offline (Queued)' : 'Web Sync Online')}
+            </span>
+          </div>
 
           {/* Wi-Fi Sync Status Badge */}
           <SyncStatusBadge

@@ -11,6 +11,7 @@
  */
 
 import { Capacitor } from '@capacitor/core';
+import { Network } from '@capacitor/network';
 import { db } from '../db';
 import { DEFAULT_GOOGLE_SCRIPT_URL } from './OtpService';
 
@@ -22,21 +23,48 @@ class CloudSyncService {
     this.lastSyncTime = null;
     this.lastSyncStatus = 'idle'; // 'idle' | 'syncing' | 'synced' | 'offline' | 'error'
     this.syncError = null;
+    this.networkListener = null;
   }
 
-  init() {
+  async init() {
     if (typeof window === 'undefined') return;
 
-    // Listen to online events
+    // 1. Android / Capacitor Wi-Fi & Network change listener
+    try {
+      this.networkListener = await Network.addListener('networkStatusChange', async (status) => {
+        console.log('[CloudSyncService] Wi-Fi / Network status changed:', status);
+        if (status.connected) {
+          // As soon as POS connects to Wi-Fi, automatically transmit all data!
+          await this.triggerAutoSync();
+        } else {
+          this.lastSyncStatus = 'offline';
+          this.notify();
+        }
+      });
+
+      // Immediate check on startup
+      const initialStatus = await Network.getStatus();
+      if (initialStatus?.connected) {
+        this.triggerAutoSync();
+      }
+    } catch (e) {
+      console.warn('[CloudSyncService] Capacitor Network listener setup notice:', e);
+    }
+
+    // 2. Web browser online / offline listeners
     window.addEventListener('online', () => {
       this.triggerAutoSync();
     });
+    window.addEventListener('offline', () => {
+      this.lastSyncStatus = 'offline';
+      this.notify();
+    });
 
-    // Start background sync timer every 30 seconds
+    // 3. Background periodic sync every 20 seconds
     if (!this.syncTimer) {
       this.syncTimer = setInterval(() => {
         this.triggerAutoSync();
-      }, 30000);
+      }, 20000);
     }
   }
 
@@ -44,6 +72,10 @@ class CloudSyncService {
     if (this.syncTimer) {
       clearInterval(this.syncTimer);
       this.syncTimer = null;
+    }
+    if (this.networkListener) {
+      try { this.networkListener.remove(); } catch {}
+      this.networkListener = null;
     }
   }
 
@@ -98,7 +130,7 @@ class CloudSyncService {
         voidCount: voided.length,
         avgOrderValue: completed.length > 0 ? totalRevenue / completed.length : 0
       },
-      orders: completed.slice(-30).reverse(),
+      orders: todayOrders.slice(-100).reverse(),
       ingredients: ingredients.map(i => ({
         id: i.id,
         name: i.name,
