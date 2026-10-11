@@ -6,7 +6,7 @@ import {
   Crown, User, LogOut, Sun, Moon, Monitor, RefreshCw, Coffee,
   ChevronRight, Shield, ShieldCheck, Clock, ExternalLink, Menu, X,
   ArrowUpRight, Wifi, WifiOff, Bell, ChevronDown, Upload, Download,
-  TrendingUp, AlertTriangle, Store
+  TrendingUp, AlertTriangle, Store, Building2
 } from 'lucide-react';
 import cloudSyncService from '../services/cloudSyncService';
 
@@ -26,12 +26,16 @@ export default function ManagerWebPortal({ currentUser, onLogout, theme, setThem
   const [toastMsg, setToastMsg] = useState('');
   const [toastType, setToastType] = useState('success');
   const [contentKey, setContentKey] = useState(0); // for fade animation on tab switch
+  const [isBranchModalOpen, setIsBranchModalOpen] = useState(false);
+  const [branchInput, setBranchInput] = useState('');
+  const [isSwitchingBranch, setIsSwitchingBranch] = useState(false);
   const [cloudSyncState, setCloudSyncState] = useState({
     isSyncing: false,
     lastSyncTime: null,
     lastSyncStatus: 'idle',
     syncError: null,
-    lastWebPushTime: null
+    lastWebPushTime: null,
+    currentBranch: cloudSyncService.getBranchKey()
   });
 
   const showToast = useCallback((msg, type = 'success') => {
@@ -46,11 +50,27 @@ export default function ManagerWebPortal({ currentUser, onLogout, theme, setThem
     setSidebarOpen(false);
   }, []);
 
+  const handleSwitchBranch = async (newBranch) => {
+    if (!newBranch || !newBranch.trim()) return;
+    setIsSwitchingBranch(true);
+    try {
+      const cleanBranch = cloudSyncService.setBranch(newBranch.trim());
+      await cloudSyncService.pullCloudData(cleanBranch);
+      showToast(`Switched active branch to [${cleanBranch}] ✓`, 'success');
+      setContentKey(prev => prev + 1);
+      setIsBranchModalOpen(false);
+    } catch (err) {
+      showToast(`Branch switch notice: ${err.message}`, 'error');
+    } finally {
+      setIsSwitchingBranch(false);
+    }
+  };
+
   const handlePushToPos = async () => {
     setIsPushingToPos(true);
     try {
       await cloudSyncService.pushWebChanges();
-      showToast('Changes pushed to POS successfully. The tablet will sync when connected to the internet.', 'success');
+      showToast(`Changes pushed to branch [${cloudSyncService.getBranchKey()}] successfully!`, 'success');
     } catch (err) {
       showToast(`Push failed: ${err.message}`, 'error');
     } finally {
@@ -152,9 +172,14 @@ export default function ManagerWebPortal({ currentUser, onLogout, theme, setThem
               <h1 className="font-bold text-sm tracking-tight truncate leading-tight text-text-main">
                 {settings?.cafeName || 'Aster POS'}
               </h1>
-              <span className="text-[9px] font-bold uppercase tracking-[0.1em] text-primary">
-                Manager Portal
-              </span>
+              <div className="flex items-center gap-1.5 mt-0.5">
+                <span className="text-[9px] font-bold uppercase tracking-[0.1em] text-primary shrink-0">
+                  Portal
+                </span>
+                <span className="text-[9px] text-text-light font-medium bg-surface-hover px-1.5 py-0.5 rounded border border-border truncate max-w-[120px]" title={`Branch: ${cloudSyncState.currentBranch}`}>
+                  {cloudSyncState.currentBranch || 'default'}
+                </span>
+              </div>
             </div>
           </div>
           <button
@@ -294,6 +319,23 @@ export default function ManagerWebPortal({ currentUser, onLogout, theme, setThem
           {/* Right: Actions */}
           <div className="flex items-center gap-2">
 
+            {/* Active Branch Switcher Pill */}
+            <button
+              onClick={() => {
+                setBranchInput(cloudSyncService.getBranchKey());
+                setIsBranchModalOpen(true);
+              }}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 bg-surface-hover hover:bg-border text-text-main border border-border rounded-lg text-[11px] font-semibold transition-all group shrink-0"
+              title="Click to switch store branch / shop"
+            >
+              <Building2 size={13} className="text-primary group-hover:scale-110 transition-transform" />
+              <span className="hidden sm:inline text-text-light font-medium">Branch:</span>
+              <span className="font-bold text-text-main max-w-[90px] sm:max-w-[130px] truncate">
+                {cloudSyncState.currentBranch || 'Default'}
+              </span>
+              <ChevronDown size={11} className="text-text-light shrink-0" />
+            </button>
+
             {/* Live Revenue Pill — desktop only */}
             <div className="hidden xl:flex items-center gap-2 px-3 py-1.5 bg-emerald-500/8 border border-emerald-500/15 rounded-lg">
               <TrendingUp size={13} className="text-emerald-600 dark:text-emerald-400" />
@@ -416,6 +458,86 @@ export default function ManagerWebPortal({ currentUser, onLogout, theme, setThem
           </div>
         </main>
       </div>
+      {/* ── Switch Branch Modal ── */}
+      {isBranchModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in">
+          <div className="bg-surface rounded-2xl shadow-2xl border border-border w-full max-w-md overflow-hidden p-6 space-y-4">
+            <div className="flex items-center justify-between border-b border-border pb-3">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-primary/10 text-primary flex items-center justify-center font-bold">
+                  <Building2 size={18} />
+                </div>
+                <div>
+                  <h3 className="font-bold text-base text-text-main">Switch Store Branch</h3>
+                  <p className="text-xs text-text-light">Manage a different shop or branch location</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setIsBranchModalOpen(false)}
+                className="w-8 h-8 rounded-lg flex items-center justify-center text-text-light hover:bg-surface-hover hover:text-text-main"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              <div>
+                <label className="block text-xs font-bold text-text-light uppercase tracking-wider mb-1.5">
+                  Branch Identifier / Manager Email
+                </label>
+                <input
+                  type="text"
+                  value={branchInput}
+                  onChange={e => setBranchInput(e.target.value)}
+                  placeholder="e.g. branch1@shop.com or BRANCH-001"
+                  className="w-full h-11 px-3.5 bg-background border border-border rounded-xl text-text-main text-sm font-semibold focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
+                  autoFocus
+                />
+              </div>
+
+              {/* Quick Select demo branches */}
+              <div>
+                <p className="text-[11px] font-bold text-text-light uppercase tracking-wider mb-1.5">Quick Switch Branches:</p>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setBranchInput('branch1@asterpos.com')}
+                    className="p-2.5 rounded-xl border border-border bg-background hover:bg-surface-hover hover:border-primary/30 text-left transition-all"
+                  >
+                    <div className="text-xs font-bold text-text-main">Branch 1 (Downtown)</div>
+                    <div className="text-[10px] text-text-light font-mono truncate">branch1@asterpos.com</div>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setBranchInput('branch2@asterpos.com')}
+                    className="p-2.5 rounded-xl border border-border bg-background hover:bg-surface-hover hover:border-primary/30 text-left transition-all"
+                  >
+                    <div className="text-xs font-bold text-text-main">Branch 2 (Mall)</div>
+                    <div className="text-[10px] text-text-light font-mono truncate">branch2@asterpos.com</div>
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex gap-2 pt-2 border-t border-border">
+              <button
+                onClick={() => setIsBranchModalOpen(false)}
+                className="flex-1 h-10 rounded-xl bg-surface-hover hover:bg-border text-text-main font-semibold text-xs transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => handleSwitchBranch(branchInput)}
+                disabled={isSwitchingBranch || !branchInput.trim()}
+                className="flex-1 h-10 rounded-xl bg-primary hover:bg-primary-dark text-white font-bold text-xs flex items-center justify-center gap-1.5 transition-all disabled:opacity-50 cursor-pointer"
+              >
+                {isSwitchingBranch ? <RefreshCw size={14} className="animate-spin" /> : <Store size={14} />}
+                <span>{isSwitchingBranch ? 'Loading Branch...' : 'Switch & Load Data'}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

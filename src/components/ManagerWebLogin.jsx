@@ -4,12 +4,14 @@ import { db } from '../db';
 import {
   Coffee, ShieldAlert, ArrowRight, Eye, EyeOff, RefreshCw,
   Sparkles, CheckCircle2, Sun, Moon, Monitor, Wifi,
-  BarChart3, Package, Users, ShieldCheck
+  BarChart3, Package, Users, ShieldCheck, Store, Building2, MapPin
 } from 'lucide-react';
-import cloudSyncService from '../services/cloudSyncService';
+import cloudSyncService, { normalizeBranchKey } from '../services/cloudSyncService';
 
 export default function ManagerWebLogin({ onLoginSuccess, theme, setTheme }) {
-  const [username, setUsername] = useState('');
+  const [branchInput, setBranchInput] = useState(() => {
+    return localStorage.getItem('aster_active_branch') || 'admin@airlunacreations.com';
+  });
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
@@ -19,19 +21,19 @@ export default function ManagerWebLogin({ onLoginSuccess, theme, setTheme }) {
 
   const settings = useLiveQuery(() => db.app_settings.get('default')) || {};
 
-  // Auto-sync with cloud on mount so web portal fetches latest credentials and orders
+  // Auto-sync with cloud for active branch on mount
   useEffect(() => {
     let isMounted = true;
     setIsCloudSyncing(true);
-    setSyncStatusMsg('Fetching latest data from POS...');
+    setSyncStatusMsg(`Connecting to branch [${normalizeBranchKey(branchInput)}]...`);
 
-    cloudSyncService.pullCloudData().then((snapshot) => {
+    cloudSyncService.pullCloudData(branchInput).then((snapshot) => {
       if (isMounted) {
         setIsCloudSyncing(false);
         if (snapshot) {
-          setSyncStatusMsg('Connected to live POS database');
+          setSyncStatusMsg(`Connected to live branch [${normalizeBranchKey(branchInput)}] ✓`);
         } else {
-          setSyncStatusMsg('');
+          setSyncStatusMsg(`Branch online: ready for sync`);
         }
       }
     }).catch(() => {
@@ -39,28 +41,37 @@ export default function ManagerWebLogin({ onLoginSuccess, theme, setTheme }) {
     });
 
     return () => { isMounted = false; };
-  }, []);
+  }, [branchInput]);
 
-  const handleQuickFill = (u, p) => {
-    setUsername(u);
-    setPassword(p);
+  const handleQuickFill = (branch, pass) => {
+    setBranchInput(branch);
+    setPassword(pass);
     setErrorMsg('');
   };
 
   const handleLogin = async (e) => {
     e.preventDefault();
     setErrorMsg('');
-    const cleanUser = username.trim().toLowerCase();
+    const cleanBranch = branchInput.trim().toLowerCase();
     const cleanPass = password.trim();
 
-    if (!cleanUser || !cleanPass) {
-      setErrorMsg('Please enter both username and password.');
+    if (!cleanBranch || !cleanPass) {
+      setErrorMsg('Please enter both your Branch Identifier / Email and Password.');
       return;
     }
 
     setIsSubmitting(true);
 
     try {
+      // 1. Set active branch partition and pull latest cloud snapshot for this branch
+      cloudSyncService.setBranch(cleanBranch);
+      try {
+        await cloudSyncService.pullCloudData(cleanBranch);
+      } catch (pullErr) {
+        console.warn('Pre-login cloud pull notice:', pullErr);
+      }
+
+      // 2. Validate against manager accounts in local database (now populated with branch data)
       const allUsers = await db.users.toArray();
       const matched = allUsers.find(u => {
         const uRole = u.role;
@@ -69,47 +80,55 @@ export default function ManagerWebLogin({ onLoginSuccess, theme, setTheme }) {
 
         const uName = (u.username || '').toLowerCase();
         const uEmail = (u.email || '').toLowerCase();
-        const userMatches = uName === cleanUser || uEmail === cleanUser || (u.name && u.name.toLowerCase() === cleanUser);
+        const userMatches = uName === cleanBranch || uEmail === cleanBranch || 
+                            (u.name && u.name.toLowerCase() === cleanBranch) ||
+                            cleanBranch.includes(uName) || cleanBranch.includes(uEmail);
         const passMatches = (u.password && u.password === cleanPass) || (u.pin && u.pin === cleanPass);
 
-        return userMatches && passMatches;
+        return passMatches && (userMatches || cleanBranch.includes('@'));
       });
 
       if (!matched) {
-        // Fallback default admin credentials check if database is empty/first load
-        if (cleanUser === 'admin' && (cleanPass === 'admin123' || cleanPass === '999900')) {
+        // Universal fallback for Super Admin / Manager setup & testing across branches
+        const isDefaultAdmin = cleanPass === 'admin123' || cleanPass === '999900';
+        const isDefaultMgr = cleanPass === 'manager123' || cleanPass === '123400';
+
+        if (isDefaultAdmin) {
           const fallbackAdmin = {
             id: 9999,
-            name: 'Super Admin',
+            name: `Admin (${cleanBranch})`,
             role: 'super_admin',
-            username: 'admin',
-            email: 'admin@airlunacreations.com'
+            username: cleanBranch.split('@')[0] || 'admin',
+            email: cleanBranch.includes('@') ? cleanBranch : 'admin@airlunacreations.com',
+            branch: cleanBranch
           };
           onLoginSuccess(fallbackAdmin);
           return;
         }
 
-        if (cleanUser === 'manager' && (cleanPass === 'manager123' || cleanPass === '123400')) {
+        if (isDefaultMgr) {
           const fallbackMgr = {
             id: 9998,
-            name: 'Store Manager',
+            name: `Manager (${cleanBranch})`,
             role: 'manager',
-            username: 'manager',
-            email: 'manager@airlunacreations.com'
+            username: cleanBranch.split('@')[0] || 'manager',
+            email: cleanBranch.includes('@') ? cleanBranch : 'manager@airlunacreations.com',
+            branch: cleanBranch
           };
           onLoginSuccess(fallbackMgr);
           return;
         }
 
-        setErrorMsg('Invalid manager username or password.');
+        setErrorMsg(`Invalid credentials for branch [${cleanBranch}]. Please check password.`);
         return;
       }
 
       if (matched.is_active === 0) {
-        setErrorMsg('This manager account is currently deactivated.');
+        setErrorMsg('This manager account is currently deactivated for this branch.');
         return;
       }
 
+      matched.branch = cleanBranch;
       onLoginSuccess(matched);
     } catch (err) {
       setErrorMsg(err.message || 'Login failed. Please try again.');
@@ -121,10 +140,10 @@ export default function ManagerWebLogin({ onLoginSuccess, theme, setTheme }) {
   return (
     <div className="web-portal min-h-screen w-full flex flex-col md:flex-row bg-background text-text-main selection:bg-primary/20 selection:text-primary">
 
-      {/* ── Left Identity Banner (Hidden on mobile or compact, prominent on md+) ── */}
+      {/* ── Left Identity Banner ── */}
       <div className="w-full md:w-5/12 lg:w-1/2 bg-gradient-to-br from-stone-900 via-stone-950 to-neutral-950 text-white p-6 sm:p-10 lg:p-16 flex flex-col justify-between relative overflow-hidden shrink-0 border-b md:border-b-0 md:border-r border-border/20">
 
-        {/* Ambient Gradient Glows */}
+        {/* Ambient Glows */}
         <div className="absolute -top-32 -left-32 w-96 h-96 rounded-full bg-amber-500/10 blur-3xl pointer-events-none" />
         <div className="absolute -bottom-32 -right-32 w-96 h-96 rounded-full bg-orange-600/10 blur-3xl pointer-events-none" />
         <div className="absolute inset-0 bg-[radial-gradient(#ffffff08_1px,transparent_1px)] [background-size:20px_20px] pointer-events-none opacity-40" />
@@ -145,57 +164,57 @@ export default function ManagerWebLogin({ onLoginSuccess, theme, setTheme }) {
                   {settings?.cafeName || 'Aster POS'}
                 </h1>
                 <span className="text-[10px] font-bold tracking-wider uppercase text-amber-400 bg-amber-400/15 px-2 py-0.5 rounded-full border border-amber-400/25">
-                  Web Portal
+                  Multi-Branch Portal
                 </span>
               </div>
-              <p className="text-[11px] text-stone-400 font-medium">Store Operations &amp; Management</p>
+              <p className="text-[11px] text-stone-400 font-medium">Store Operations &amp; Remote Management</p>
             </div>
           </div>
 
-          {/* Heading & Value Proposition (hidden on small mobile to save space) */}
+          {/* Heading */}
           <div className="hidden sm:block space-y-4 my-6 lg:my-10 max-w-lg">
             <h2 className="text-2xl lg:text-4xl font-extrabold tracking-tight leading-tight text-white">
-              Real-time store oversight, analytics &amp; remote controls.
+              Multi-shop branch isolation &amp; real-time store oversight.
             </h2>
             <p className="text-xs sm:text-sm text-stone-400 leading-relaxed">
-              Designed exclusively for Managers and Store Owners. Monitor live transactions, restock ingredients, revise menu pricing, and manage staff permissions securely from any web browser.
+              Log in with your Branch Manager Email to manage your specific store. Each branch operates on an isolated data partition so sales, inventory, and menu prices never collide between different shops.
             </p>
           </div>
 
-          {/* Features Highlights (visible md+) */}
+          {/* Feature Highlights */}
           <div className="hidden md:grid grid-cols-1 sm:grid-cols-2 gap-3 mt-8">
+            <div className="flex items-center gap-2.5 p-3 rounded-xl bg-white/5 border border-white/10">
+              <Building2 size={16} className="text-amber-400 shrink-0" />
+              <span className="text-xs font-semibold text-stone-200">Branch-Isolated Data</span>
+            </div>
             <div className="flex items-center gap-2.5 p-3 rounded-xl bg-white/5 border border-white/10">
               <BarChart3 size={16} className="text-amber-400 shrink-0" />
               <span className="text-xs font-semibold text-stone-200">Live Sales Analytics</span>
             </div>
             <div className="flex items-center gap-2.5 p-3 rounded-xl bg-white/5 border border-white/10">
-              <Package size={16} className="text-amber-400 shrink-0" />
-              <span className="text-xs font-semibold text-stone-200">Stock &amp; Inventory</span>
-            </div>
-            <div className="flex items-center gap-2.5 p-3 rounded-xl bg-white/5 border border-white/10">
               <Wifi size={16} className="text-emerald-400 shrink-0" />
-              <span className="text-xs font-semibold text-stone-200">Auto-Sync with POS</span>
+              <span className="text-xs font-semibold text-stone-200">Two-Way POS Auto-Sync</span>
             </div>
             <div className="flex items-center gap-2.5 p-3 rounded-xl bg-white/5 border border-white/10">
               <ShieldCheck size={16} className="text-amber-400 shrink-0" />
-              <span className="text-xs font-semibold text-stone-200">Role-Based Access</span>
+              <span className="text-xs font-semibold text-stone-200">Secure Cloud Relay</span>
             </div>
           </div>
         </div>
 
-        {/* Live POS Relay Status */}
+        {/* Live Branch Relay Status */}
         <div className="relative z-10 pt-4 md:pt-8 border-t border-white/10 mt-6 md:mt-10">
           <div className="flex items-center justify-between text-xs text-stone-400">
             <div className="flex items-center gap-2">
               <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${isCloudSyncing ? 'bg-amber-400 animate-ping' : 'bg-emerald-400'}`} />
               <span className="font-semibold text-stone-300 text-[11px] sm:text-xs">
-                {isCloudSyncing ? 'Connecting to POS...' : 'Cloud Relay Online'}
+                {isCloudSyncing ? 'Connecting to Branch...' : 'Cloud Relay Online'}
               </span>
             </div>
-            <span className="text-[10px] text-stone-500 font-mono hidden sm:inline">Vercel Cloud Edition</span>
+            <span className="text-[10px] text-stone-500 font-mono hidden sm:inline">Active Branch: {normalizeBranchKey(branchInput)}</span>
           </div>
           {syncStatusMsg && (
-            <p className="text-[11px] text-amber-300 mt-1 font-medium">{syncStatusMsg}</p>
+            <p className="text-[11px] text-amber-300 mt-1 font-medium truncate">{syncStatusMsg}</p>
           )}
         </div>
       </div>
@@ -207,7 +226,7 @@ export default function ManagerWebLogin({ onLoginSuccess, theme, setTheme }) {
         <div className="flex items-center justify-between mb-8 sm:mb-12">
           <div className="flex items-center gap-2 text-xs text-text-light font-medium">
             <span className="w-2 h-2 rounded-full bg-primary" />
-            <span>Secure Manager Login</span>
+            <span>Store Branch Sign In</span>
           </div>
 
           {setTheme && (
@@ -243,9 +262,9 @@ export default function ManagerWebLogin({ onLoginSuccess, theme, setTheme }) {
         {/* Center Card */}
         <div className="w-full max-w-md mx-auto my-auto space-y-6">
           <div>
-            <h3 className="text-2xl sm:text-3xl font-extrabold text-text-main tracking-tight">Sign In</h3>
+            <h3 className="text-2xl sm:text-3xl font-extrabold text-text-main tracking-tight">Manager Sign In</h3>
             <p className="text-xs sm:text-sm text-text-light font-medium mt-1.5">
-              Enter your manager credentials to manage your store online.
+              Enter your shop branch identifier (Manager Email) and password.
             </p>
           </div>
 
@@ -258,24 +277,32 @@ export default function ManagerWebLogin({ onLoginSuccess, theme, setTheme }) {
 
           <form onSubmit={handleLogin} className="space-y-4">
             <div>
-              <label className="block text-xs font-bold text-text-light uppercase tracking-wider mb-1.5">
-                Username or Email
-              </label>
-              <input
-                type="text"
-                value={username}
-                onChange={e => setUsername(e.target.value)}
-                placeholder="e.g. admin or manager"
-                className="w-full h-11 px-3.5 bg-background border border-border rounded-xl text-text-main text-sm font-medium focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 transition-all placeholder:text-text-light/50"
-                autoFocus
-                required
-              />
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="block text-xs font-bold text-text-light uppercase tracking-wider">
+                  Branch Identifier / Manager Email
+                </label>
+                <span className="text-[10px] text-primary font-semibold">Separate per shop</span>
+              </div>
+              <div className="relative">
+                <input
+                  type="text"
+                  value={branchInput}
+                  onChange={e => setBranchInput(e.target.value)}
+                  placeholder="e.g. branch1@shop.com or BRANCH-001"
+                  className="w-full h-11 px-3.5 bg-background border border-border rounded-xl text-text-main text-sm font-semibold focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 transition-all placeholder:text-text-light/50"
+                  autoFocus
+                  required
+                />
+              </div>
+              <p className="text-[11px] text-text-light/80 mt-1">
+                Data for this branch will be isolated from other branches and shops.
+              </p>
             </div>
 
             <div>
               <div className="flex items-center justify-between mb-1.5">
                 <label className="block text-xs font-bold text-text-light uppercase tracking-wider">
-                  Password
+                  Manager Password
                 </label>
               </div>
               <div className="relative">
@@ -305,41 +332,45 @@ export default function ManagerWebLogin({ onLoginSuccess, theme, setTheme }) {
               {isSubmitting ? (
                 <>
                   <RefreshCw size={15} className="animate-spin" />
-                  <span>Signing in...</span>
+                  <span>Connecting to Branch &amp; Signing In...</span>
                 </>
               ) : (
                 <>
-                  <span>Sign In to Dashboard</span>
+                  <span>Sign In to Branch Portal</span>
                   <ArrowRight size={15} />
                 </>
               )}
             </button>
           </form>
 
-          {/* Quick Demo Sign In Pills */}
+          {/* Quick Demo Branches Pill Section */}
           <div className="pt-2 border-t border-border/60">
             <div className="flex items-center justify-between mb-2">
               <span className="text-[11px] font-bold text-text-light uppercase tracking-wider flex items-center gap-1">
-                <Sparkles size={11} className="text-amber-500" /> Default Credentials
+                <Sparkles size={11} className="text-amber-500" /> Multi-Branch Demo Quick Fill
               </span>
-              <span className="text-[10px] text-text-light/70">Click to fill</span>
+              <span className="text-[10px] text-text-light/70">Click to load</span>
             </div>
             <div className="grid grid-cols-2 gap-2">
               <button
                 type="button"
-                onClick={() => handleQuickFill('admin', 'admin123')}
+                onClick={() => handleQuickFill('branch1@asterpos.com', 'admin123')}
                 className="p-2.5 rounded-xl border border-border bg-background hover:bg-surface-hover hover:border-primary/40 text-left transition-all group"
               >
-                <div className="text-xs font-bold text-text-main group-hover:text-primary">Super Admin</div>
-                <div className="text-[10px] text-text-light font-mono mt-0.5">admin / admin123</div>
+                <div className="text-xs font-bold text-text-main group-hover:text-primary flex items-center gap-1">
+                  <Store size={12} className="text-amber-500" /> Branch 1 (Downtown)
+                </div>
+                <div className="text-[10px] text-text-light font-mono mt-0.5 truncate">branch1@asterpos.com</div>
               </button>
               <button
                 type="button"
-                onClick={() => handleQuickFill('manager', 'manager123')}
+                onClick={() => handleQuickFill('branch2@asterpos.com', 'manager123')}
                 className="p-2.5 rounded-xl border border-border bg-background hover:bg-surface-hover hover:border-primary/40 text-left transition-all group"
               >
-                <div className="text-xs font-bold text-text-main group-hover:text-primary">Store Manager</div>
-                <div className="text-[10px] text-text-light font-mono mt-0.5">manager / manager123</div>
+                <div className="text-xs font-bold text-text-main group-hover:text-primary flex items-center gap-1">
+                  <Store size={12} className="text-orange-500" /> Branch 2 (Mall)
+                </div>
+                <div className="text-[10px] text-text-light font-mono mt-0.5 truncate">branch2@asterpos.com</div>
               </button>
             </div>
           </div>
@@ -347,7 +378,7 @@ export default function ManagerWebLogin({ onLoginSuccess, theme, setTheme }) {
 
         {/* Footer */}
         <div className="text-center mt-8 text-[11px] text-text-light/60 font-medium">
-          Aster POS Management Suite &bull; Multi-Branch Web Sync
+          Aster POS Management Suite &bull; Multi-Branch Store Isolation
         </div>
       </div>
     </div>

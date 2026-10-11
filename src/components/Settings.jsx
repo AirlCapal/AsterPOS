@@ -3,10 +3,12 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { db, hasMinRole, ROLE_LABELS } from '../db';
 import {
   Save, Users, Store, Trash2, UserPlus, Shield, AlertTriangle,
-  QrCode, Check, KeyRound, Eye, EyeOff, Upload, X, Power, PowerOff, Edit2
+  QrCode, Check, KeyRound, Eye, EyeOff, Upload, X, Power, PowerOff, Edit2,
+  Building2, Wifi, RefreshCw, Send, CheckCircle2
 } from 'lucide-react';
 import WifiSyncSettings from './WifiSyncSettings';
 import { maskEmail, maskPhone } from '../services/OtpService';
+import cloudSyncService from '../services/cloudSyncService';
 
 // --- Confirm Dialog ---
 const ConfirmDialog = ({ isOpen, title, message, onConfirm, onCancel, variant = 'primary' }) => {
@@ -53,6 +55,10 @@ export default function Settings({ currentUser, syncState }) {
     currency: '₱',
     receiptFooter: 'Thank you!'
   });
+  const [branchIdentifier, setBranchIdentifier] = useState('admin@airlunacreations.com');
+  const [isTestingSync, setIsTestingSync] = useState(false);
+  const [syncTestResult, setSyncTestResult] = useState(null);
+  const [isSyncingNow, setIsSyncingNow] = useState(false);
   const [saved, setSaved] = useState(false);
   const [toastMsg, setToastMsg] = useState('');
   const [showToast, setShowToast] = useState(false);
@@ -69,6 +75,7 @@ export default function Settings({ currentUser, syncState }) {
         currency: settingsData.currency || '₱',
         receiptFooter: settingsData.receiptFooter || ''
       });
+      setBranchIdentifier(settingsData.branchIdentifier || settingsData.managerEmail || 'admin@airlunacreations.com');
     }
   }, [settingsData]);
 
@@ -83,21 +90,58 @@ export default function Settings({ currentUser, syncState }) {
   };
   const closeConfirm = () => setConfirmDialog({ ...confirmDialog, isOpen: false });
 
+  const handleTestConnection = async () => {
+    setIsTestingSync(true);
+    setSyncTestResult(null);
+    try {
+      const cleanBranch = branchIdentifier.trim().toLowerCase();
+      cloudSyncService.setBranch(cleanBranch);
+      const res = await cloudSyncService.testConnection(null, cleanBranch);
+      setSyncTestResult(res);
+      if (res.ok) {
+        flash(`Connected to cloud for branch [${cleanBranch}] ✓`);
+      } else {
+        flash(res.message);
+      }
+    } catch (err) {
+      setSyncTestResult({ ok: false, message: err.message });
+      flash('Sync test failed');
+    } finally {
+      setIsTestingSync(false);
+    }
+  };
+
+  const handleSyncNow = async () => {
+    setIsSyncingNow(true);
+    try {
+      const cleanBranch = branchIdentifier.trim().toLowerCase();
+      cloudSyncService.setBranch(cleanBranch);
+      await cloudSyncService.triggerAutoSync();
+      flash(`POS orders synced to branch [${cleanBranch}]!`);
+    } catch (err) {
+      flash('Sync notice: ' + err.message);
+    } finally {
+      setIsSyncingNow(false);
+    }
+  };
+
   const handleSave = () => {
-    showConfirm('Save Settings', 'Save changes to store configuration?', async () => {
+    showConfirm('Save Settings', 'Save changes to store and branch configuration?', async () => {
       closeConfirm();
-      // Preserve cafeName and branding fields (only super_admin can change those)
-      const current = await db.app_settings.get('default');
+      const cleanBranch = branchIdentifier.trim().toLowerCase();
+      const current = await db.app_settings.get('default') || {};
       await db.app_settings.put({
         ...current,
         id: 'default',
         taxRate: formData.taxRate,
         currency: formData.currency,
-        receiptFooter: formData.receiptFooter
+        receiptFooter: formData.receiptFooter,
+        branchIdentifier: cleanBranch
       });
+      cloudSyncService.setBranch(cleanBranch);
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
-      flash('Settings saved');
+      flash(`Settings saved for branch [${cleanBranch}]`);
     });
   };
 
@@ -255,6 +299,72 @@ export default function Settings({ currentUser, syncState }) {
           
           {/* Wi-Fi Sync Configuration */}
           {syncState && <WifiSyncSettings syncState={syncState} />}
+
+          {/* Multi-Branch & Cloud Sync Configuration */}
+          <div className="bg-surface p-4 sm:p-5 lg:p-6 rounded-xl sm:rounded-2xl border border-border space-y-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className="w-10 h-10 rounded-xl bg-primary/10 text-primary flex items-center justify-center">
+                  <Building2 size={20} />
+                </div>
+                <div>
+                  <h3 className="text-base sm:text-lg font-bold text-text-main">Branch &amp; Cloud Sync</h3>
+                  <p className="text-xs text-text-light font-medium">Multi-shop isolation &amp; automatic web synchronization</p>
+                </div>
+              </div>
+              <span className="text-[11px] font-bold px-2.5 py-1 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
+                Active Branch: {cloudSyncService.getBranchKey()}
+              </span>
+            </div>
+
+            <div className="bg-background border border-border rounded-xl p-3.5 space-y-3">
+              <div>
+                <label className="block text-xs font-bold text-text-light uppercase tracking-wider mb-1">
+                  Shop Branch Identifier / Manager Email
+                </label>
+                <input
+                  type="text"
+                  value={branchIdentifier}
+                  onChange={e => setBranchIdentifier(e.target.value)}
+                  placeholder="e.g. branch1@shop.com or BRANCH-001"
+                  className="min-h-[42px] w-full px-3.5 bg-surface border border-border rounded-xl text-text-main text-sm font-semibold focus:outline-none focus:border-primary"
+                />
+                <p className="text-[11px] text-text-light mt-1">
+                  Sales and inventory for this POS tablet will sync exclusively to this branch. Safe for deploying across different shops.
+                </p>
+              </div>
+
+              {syncTestResult && (
+                <div className={`p-3 rounded-xl border text-xs font-semibold flex items-center gap-2 ${
+                  syncTestResult.ok ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-600 dark:text-emerald-400' : 'bg-red-500/10 border-red-500/20 text-red-600 dark:text-red-400'
+                }`}>
+                  {syncTestResult.ok ? <CheckCircle2 size={16} /> : <AlertTriangle size={16} />}
+                  <span>{syncTestResult.message}</span>
+                </div>
+              )}
+
+              <div className="flex flex-wrap gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={handleTestConnection}
+                  disabled={isTestingSync || !branchIdentifier.trim()}
+                  className="min-h-[38px] px-3.5 rounded-lg border border-border bg-surface hover:bg-surface-hover text-text-main text-xs font-bold flex items-center gap-1.5 transition-all disabled:opacity-50"
+                >
+                  <Wifi size={13} className={isTestingSync ? 'animate-pulse text-primary' : 'text-primary'} />
+                  <span>{isTestingSync ? 'Testing Connection...' : 'Test Cloud Connection'}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSyncNow}
+                  disabled={isSyncingNow}
+                  className="min-h-[38px] px-3.5 rounded-lg bg-primary hover:bg-primary-dark text-white text-xs font-bold flex items-center gap-1.5 transition-all disabled:opacity-50"
+                >
+                  <RefreshCw size={13} className={isSyncingNow ? 'animate-spin' : ''} />
+                  <span>{isSyncingNow ? 'Syncing...' : 'Sync POS to Cloud Now'}</span>
+                </button>
+              </div>
+            </div>
+          </div>
 
           {/* Store Settings */}
           <div className="bg-surface p-4 sm:p-5 lg:p-6 rounded-xl sm:rounded-2xl border border-border">

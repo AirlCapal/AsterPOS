@@ -1,19 +1,28 @@
 /**
- * CloudSyncService — Robust Two-Way Automatic Synchronization between Aster POS and Manager Web Portal.
+ * CloudSyncService — Robust Multi-Branch Synchronization between Aster POS and Manager Web Portal.
  * 
- * Works 100% free via Google Apps Script (Web App endpoint):
- *   1. POS -> Website: When the POS tablet is online, completed sales, register summaries,
- *      and inventory deductions are pushed to the Cloud Relay so managers see live data.
- *   2. Website -> POS: When managers edit products, prices, categories, inventory stock,
- *      staff accounts, or store settings from the website, changes are pushed to the Cloud Relay.
- *      As soon as the POS tablet has an internet connection (via Wi-Fi or mobile data), it
- *      automatically pulls and applies the manager's edits into its local database in real time!
+ * Supports complete data isolation for different shops / branches based on:
+ *   - Manager Email (e.g. manager@branch1.com)
+ *   - Branch / Store Identifier (e.g. BRANCH-001, SHOP-NORTH)
+ * 
+ * Two-Way Auto-Sync:
+ *   1. POS -> Cloud Relay: Orders, revenue, stock levels transmitted automatically when online.
+ *   2. Web -> POS: Remote manager edits (menu, prices, inventory, staff) pushed to the cloud
+ *      and applied to the specific branch POS tablet when connected to the internet.
  */
 
 import { Capacitor } from '@capacitor/core';
 import { Network } from '@capacitor/network';
 import { db } from '../db';
 import { DEFAULT_GOOGLE_SCRIPT_URL } from './OtpService';
+
+export function normalizeBranchKey(input) {
+  if (!input) return 'default';
+  const clean = String(input).toLowerCase().trim();
+  // Safe alphanumeric, @, ., -, _
+  const normalized = clean.replace(/[^a-z0-9_@.-]/g, '_');
+  return normalized || 'default';
+}
 
 class CloudSyncService {
   constructor() {
@@ -25,18 +34,19 @@ class CloudSyncService {
     this.syncError = null;
     this.networkListener = null;
     this.lastWebPushTime = null;
-    this.isWebAutoPublishing = false;
+    this.currentBranch = null;
   }
 
   async init() {
     if (typeof window === 'undefined') return;
 
-    // 1. Android / Capacitor Wi-Fi & Network change listener
+    // Load active branch from localStorage or settings
+    await this.resolveActiveBranch();
+
+    // 1. Android / Capacitor Network listener
     try {
       this.networkListener = await Network.addListener('networkStatusChange', async (status) => {
-        console.log('[CloudSyncService] Wi-Fi / Network status changed:', status);
         if (status.connected) {
-          // As soon as POS connects to Wi-Fi, pull any manager web edits and transmit POS data!
           await this.syncAll();
         } else {
           this.lastSyncStatus = 'offline';
@@ -44,16 +54,15 @@ class CloudSyncService {
         }
       });
 
-      // Immediate check on startup
       const initialStatus = await Network.getStatus();
       if (initialStatus?.connected) {
         this.syncAll();
       }
     } catch (e) {
-      console.warn('[CloudSyncService] Capacitor Network listener setup notice:', e);
+      // Capacitor Network not available (e.g. standard browser)
     }
 
-    // 2. Web browser online / offline listeners
+    // 2. Browser online / offline listeners
     window.addEventListener('online', () => {
       this.syncAll();
     });
@@ -62,11 +71,11 @@ class CloudSyncService {
       this.notify();
     });
 
-    // 3. Background periodic sync every 15 seconds
+    // 3. Periodic auto-sync every 20 seconds
     if (!this.syncTimer) {
       this.syncTimer = setInterval(() => {
         this.syncAll();
-      }, 15000);
+      }, 20000);
     }
   }
 
@@ -92,7 +101,8 @@ class CloudSyncService {
       lastSyncTime: this.lastSyncTime,
       lastSyncStatus: this.lastSyncStatus,
       syncError: this.syncError,
-      lastWebPushTime: this.lastWebPushTime
+      lastWebPushTime: this.lastWebPushTime,
+      currentBranch: this.currentBranch || 'default'
     };
     this.listeners.forEach(cb => {
       try { cb(state); } catch {}
@@ -100,24 +110,94 @@ class CloudSyncService {
   }
 
   /**
-   * Unified sync: pulls remote updates and pushes local data depending on context
+   * Resolves the active branch identifier
+   */
+  async resolveActiveBranch() {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('aster_active_branch');
+      if (saved) {
+        this.currentBranch = normalizeBranchKey(saved);
+        return this.currentBranch;
+      }
+    }
+
+    try {
+      const settings = await db.app_settings.get('default');
+      const fromSettings = settings?.branchIdentifier || settings?.managerEmail;
+      if (fromSettings) {
+        this.currentBranch = normalizeBranchKey(fromSettings);
+        return this.currentBranch;
+      }
+    } catch {}
+
+    this.currentBranch = 'default';
+    return this.currentBranch;
+  }
+
+  getBranchKey() {
+    if (this.currentBranch) return this.currentBranch;
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('aster_active_branch');
+      if (saved) {
+        this.currentBranch = normalizeBranchKey(saved);
+        return this.currentBranch;
+      }
+    }
+    return 'default';
+  }
+
+  setBranch(branchKey) {
+    const normalized = normalizeBranchKey(branchKey);
+    this.currentBranch = normalized;
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('aster_active_branch', normalized);
+    }
+    this.notify();
+    return normalized;
+  }
+
+  /**
+   * Resolves endpoint URLs with local /api/sync relay fallback
+   */
+  async getSyncEndpoints() {
+    const settings = await db.app_settings.get('default');
+    const customUrl = settings?.googleAppsScriptUrl?.trim();
+    const isWeb = typeof window !== 'undefined' && !Capacitor.isNativePlatform();
+
+    const endpoints = [];
+
+    // On web, try on-origin /api/sync first to bypass browser CORS
+    if (isWeb && typeof window !== 'undefined') {
+      endpoints.push('/api/sync');
+    }
+
+    // Then Google Apps Script URL
+    if (customUrl) {
+      endpoints.push(customUrl);
+    } else {
+      endpoints.push(DEFAULT_GOOGLE_SCRIPT_URL);
+    }
+
+    return endpoints;
+  }
+
+  /**
+   * Background unified sync
    */
   async syncAll() {
     if (this.isSyncing) return;
     const isWeb = typeof window !== 'undefined' && localStorage.getItem('aster_portal_mode') === 'manager_web';
-    
+
     if (isWeb) {
-      // Manager Website: pull POS sales data
       await this.pullCloudData();
     } else {
-      // Cashier POS Tablet: check for Manager edits first, then push POS sales
       await this.checkAndApplyManagerUpdates();
       await this.triggerAutoSync();
     }
   }
 
   /**
-   * Builds the latest state payload to transmit from POS to Cloud Relay
+   * Builds the latest state payload partitioned by branch
    */
   async buildCloudPayload(source = 'POS') {
     const todayStart = new Date();
@@ -139,8 +219,13 @@ class CloudSyncService {
     const totalRevenue = completed.reduce((sum, o) => sum + (o.total || 0), 0);
     const cashSales = completed.filter(o => o.paymentMethod === 'Cash').reduce((sum, o) => sum + (o.total || 0), 0);
 
+    const branch = this.getBranchKey();
+    const settingsObj = appSettings[0] || {};
+
     return {
       action: 'PUSH_SYNC_DATA',
+      branch: branch,
+      branchName: settingsObj.cafeName || 'Aster Store',
       source: source,
       timestamp: Date.now(),
       summary: {
@@ -181,12 +266,12 @@ class CloudSyncService {
         phone_number: u.phone_number,
         otp_delivery_preference: u.otp_delivery_preference
       })),
-      settings: appSettings[0] || {}
+      settings: settingsObj
     };
   }
 
   /**
-   * Pushes data from POS App to Google Apps Script cloud relay
+   * POS -> CLOUD: Transmits cashier orders and shift metrics under this branch
    */
   async triggerAutoSync() {
     if (this.isSyncing) return;
@@ -202,31 +287,42 @@ class CloudSyncService {
       this.syncError = null;
       this.notify();
 
-      const settings = await db.app_settings.get('default');
-      const scriptUrl = settings?.googleAppsScriptUrl?.trim() || DEFAULT_GOOGLE_SCRIPT_URL;
-      if (!scriptUrl) {
-        this.isSyncing = false;
-        this.lastSyncStatus = 'idle';
-        this.notify();
-        return;
+      const branch = this.getBranchKey();
+      const payload = await this.buildCloudPayload('POS');
+      const endpoints = await this.getSyncEndpoints();
+
+      let success = false;
+      let lastErr = null;
+
+      for (const url of endpoints) {
+        try {
+          const fetchUrl = `${url}?branch=${encodeURIComponent(branch)}`;
+          const response = await fetch(fetchUrl, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'text/plain;charset=utf-8'
+            },
+            body: JSON.stringify(payload)
+          });
+
+          if (response.ok) {
+            success = true;
+            break;
+          }
+        } catch (e) {
+          lastErr = e;
+        }
       }
 
-      const payload = await this.buildCloudPayload('POS');
-
-      // Transmit to Google Apps Script
-      await fetch(scriptUrl, {
-        method: 'POST',
-        mode: 'no-cors',
-        headers: {
-          'Content-Type': 'text/plain;charset=utf-8'
-        },
-        body: JSON.stringify(payload)
-      });
-
-      this.lastSyncTime = Date.now();
-      this.lastSyncStatus = 'synced';
+      if (success) {
+        this.lastSyncTime = Date.now();
+        this.lastSyncStatus = 'synced';
+        this.syncError = null;
+      } else {
+        throw lastErr || new Error('All sync endpoints failed');
+      }
     } catch (err) {
-      console.warn('[CloudSyncService] Sync push error:', err);
+      console.warn('[CloudSyncService] POS sync push error:', err);
       this.lastSyncStatus = 'error';
       this.syncError = err.message;
     } finally {
@@ -236,7 +332,7 @@ class CloudSyncService {
   }
 
   /**
-   * MANAGER WEBSITE -> CLOUD: Pushes edits made by Manager (menu, prices, inventory, staff, settings)
+   * WEB -> CLOUD: Pushes manager modifications (products, prices, stocks, settings)
    */
   async pushWebChanges() {
     if (typeof navigator !== 'undefined' && !navigator.onLine) {
@@ -248,26 +344,43 @@ class CloudSyncService {
       this.lastSyncStatus = 'syncing';
       this.notify();
 
-      const settings = await db.app_settings.get('default');
-      const scriptUrl = settings?.googleAppsScriptUrl?.trim() || DEFAULT_GOOGLE_SCRIPT_URL;
-      if (!scriptUrl) throw new Error('Google Apps Script URL is not configured');
-
+      const branch = this.getBranchKey();
       const payload = await this.buildCloudPayload('WEB');
       payload.action = 'PUSH_WEB_UPDATE';
 
-      await fetch(scriptUrl, {
-        method: 'POST',
-        mode: 'no-cors',
-        headers: {
-          'Content-Type': 'text/plain;charset=utf-8'
-        },
-        body: JSON.stringify(payload)
-      });
+      const endpoints = await this.getSyncEndpoints();
+      let success = false;
+      let lastErr = null;
 
-      this.lastWebPushTime = Date.now();
-      this.lastSyncTime = Date.now();
-      this.lastSyncStatus = 'synced';
-      return { success: true, timestamp: this.lastWebPushTime };
+      for (const url of endpoints) {
+        try {
+          const fetchUrl = `${url}?branch=${encodeURIComponent(branch)}`;
+          const response = await fetch(fetchUrl, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'text/plain;charset=utf-8'
+            },
+            body: JSON.stringify(payload)
+          });
+
+          if (response.ok) {
+            success = true;
+            break;
+          }
+        } catch (e) {
+          lastErr = e;
+        }
+      }
+
+      if (success) {
+        this.lastWebPushTime = Date.now();
+        this.lastSyncTime = Date.now();
+        this.lastSyncStatus = 'synced';
+        this.syncError = null;
+        return { success: true, branch, timestamp: this.lastWebPushTime };
+      } else {
+        throw lastErr || new Error('Failed to push changes to cloud relay');
+      }
     } catch (err) {
       console.warn('[CloudSyncService] Web push error:', err);
       this.lastSyncStatus = 'error';
@@ -280,92 +393,84 @@ class CloudSyncService {
   }
 
   /**
-   * POS TABLET -> CLOUD: Checks if the Manager edited any data from the website,
-   * and automatically applies the updates directly into the POS local database!
+   * POS -> CLOUD: Pulls manager web updates for THIS branch
    */
   async checkAndApplyManagerUpdates() {
     try {
-      const settings = await db.app_settings.get('default');
-      const scriptUrl = settings?.googleAppsScriptUrl?.trim() || DEFAULT_GOOGLE_SCRIPT_URL;
-      if (!scriptUrl) return false;
+      const branch = this.getBranchKey();
+      const endpoints = await this.getSyncEndpoints();
 
-      const res = await fetch(`${scriptUrl}?action=GET_SYNC_DATA&t=${Date.now()}`);
-      if (!res.ok) return false;
-      const data = await res.json();
+      let remoteData = null;
 
-      if (!data || !data.success || !data.snapshot) return false;
+      for (const url of endpoints) {
+        try {
+          const fetchUrl = `${url}?action=GET_SYNC_DATA&branch=${encodeURIComponent(branch)}&t=${Date.now()}`;
+          const res = await fetch(fetchUrl);
+          if (res.ok) {
+            const json = await res.json();
+            if (json && json.success && json.snapshot) {
+              remoteData = json;
+              break;
+            }
+          }
+        } catch {}
+      }
 
-      // Only apply if the snapshot came from WEB and is newer than last applied
-      const isFromWeb = data.source === 'WEB';
-      const mutationTs = data.mutationTimestamp || data.snapshot.timestamp || 0;
-      const lastAppliedTs = parseInt(localStorage.getItem('last_applied_web_ts') || '0', 10);
+      if (!remoteData) return false;
+
+      const isFromWeb = remoteData.source === 'WEB';
+      const mutationTs = remoteData.mutationTimestamp || remoteData.snapshot.timestamp || 0;
+      const lastAppliedTs = parseInt(localStorage.getItem(`last_applied_web_ts_${branch}`) || '0', 10);
 
       if (isFromWeb && mutationTs > lastAppliedTs) {
-        console.log('[CloudSyncService] New updates from Manager Web detected! Applying to POS database...');
-        const s = data.snapshot;
+        console.log(`[CloudSyncService] Manager Web updates detected for branch [${branch}]. Applying...`);
+        const s = remoteData.snapshot;
 
         await db.transaction('rw', [db.products, db.ingredients, db.categories, db.users, db.app_settings], async () => {
-          // 1. Sync Products & Prices
           if (Array.isArray(s.products)) {
             const remoteProductIds = new Set(s.products.map(p => p.id));
             const localProducts = await db.products.toArray();
             for (const lp of localProducts) {
-              if (!remoteProductIds.has(lp.id)) {
-                await db.products.delete(lp.id);
-              }
+              if (!remoteProductIds.has(lp.id)) await db.products.delete(lp.id);
             }
-            for (const p of s.products) {
-              await db.products.put(p);
-            }
+            for (const p of s.products) await db.products.put(p);
           }
 
-          // 2. Sync Categories
           if (Array.isArray(s.categories)) {
             const remoteCatIds = new Set(s.categories.map(c => c.id));
             const localCats = await db.categories.toArray();
             for (const lc of localCats) {
-              if (!remoteCatIds.has(lc.id)) {
-                await db.categories.delete(lc.id);
-              }
+              if (!remoteCatIds.has(lc.id)) await db.categories.delete(lc.id);
             }
-            for (const c of s.categories) {
-              await db.categories.put(c);
-            }
+            for (const c of s.categories) await db.categories.put(c);
           }
 
-          // 3. Sync Ingredients & Stocks
           if (Array.isArray(s.ingredients)) {
-            for (const ing of s.ingredients) {
-              await db.ingredients.put(ing);
-            }
+            for (const ing of s.ingredients) await db.ingredients.put(ing);
           }
 
-          // 4. Sync Users / Staff (PINs, Web Passwords, Roles)
           if (Array.isArray(s.users)) {
-            for (const u of s.users) {
-              await db.users.put(u);
-            }
+            for (const u of s.users) await db.users.put(u);
           }
 
-          // 5. Sync Settings
           if (s.settings && typeof s.settings === 'object') {
             await db.app_settings.put({ ...s.settings, id: 'default' });
           }
         });
 
-        localStorage.setItem('last_applied_web_ts', mutationTs.toString());
+        localStorage.setItem(`last_applied_web_ts_${branch}`, mutationTs.toString());
         this.lastSyncTime = Date.now();
         this.lastSyncStatus = 'synced';
         this.notify();
 
-        // Dispatch notification event for the POS user interface
         if (typeof window !== 'undefined') {
           window.dispatchEvent(new CustomEvent('manager-remote-update-applied', {
-            detail: { timestamp: mutationTs }
+            detail: { branch, timestamp: mutationTs }
           }));
         }
         return true;
       }
+
       return false;
     } catch (err) {
       console.warn('[CloudSyncService] checkAndApplyManagerUpdates warning:', err);
@@ -374,27 +479,39 @@ class CloudSyncService {
   }
 
   /**
-   * Pulls data into Manager Web Portal from Google Apps Script cloud relay
+   * CLOUD -> WEB: Pulls latest data into Manager Web Portal for the active branch
    */
-  async pullCloudData() {
+  async pullCloudData(specificBranch = null) {
     try {
       this.isSyncing = true;
       this.lastSyncStatus = 'syncing';
       this.notify();
 
-      const settings = await db.app_settings.get('default');
-      const scriptUrl = settings?.googleAppsScriptUrl?.trim() || DEFAULT_GOOGLE_SCRIPT_URL;
-      if (!scriptUrl) return null;
+      const branch = specificBranch ? normalizeBranchKey(specificBranch) : this.getBranchKey();
+      const endpoints = await this.getSyncEndpoints();
 
-      // GET request to fetch cloud snapshot
-      const res = await fetch(`${scriptUrl}?action=GET_SYNC_DATA&t=${Date.now()}`);
-      if (!res.ok) throw new Error('Cloud pull failed');
-      const data = await res.json();
+      let remoteSnapshot = null;
+      let lastErr = null;
 
-      if (data && data.success && data.snapshot) {
-        const s = data.snapshot;
+      for (const url of endpoints) {
+        try {
+          const fetchUrl = `${url}?action=GET_SYNC_DATA&branch=${encodeURIComponent(branch)}&t=${Date.now()}`;
+          const res = await fetch(fetchUrl);
+          if (res.ok) {
+            const data = await res.json();
+            if (data && data.success && data.snapshot) {
+              remoteSnapshot = data.snapshot;
+              break;
+            }
+          }
+        } catch (e) {
+          lastErr = e;
+        }
+      }
 
-        // Apply snapshot into local IndexedDB
+      if (remoteSnapshot) {
+        const s = remoteSnapshot;
+
         await db.transaction('rw', [db.products, db.ingredients, db.orders, db.audit_logs, db.categories, db.users], async () => {
           if (s.products?.length) {
             for (const p of s.products) await db.products.put(p);
@@ -418,8 +535,12 @@ class CloudSyncService {
 
         this.lastSyncTime = Date.now();
         this.lastSyncStatus = 'synced';
+        this.syncError = null;
         return s;
       }
+
+      // No snapshot found for this branch yet
+      this.lastSyncStatus = 'idle';
       return null;
     } catch (err) {
       console.warn('[CloudSyncService] Pull error:', err);
@@ -429,6 +550,34 @@ class CloudSyncService {
     } finally {
       this.isSyncing = false;
       this.notify();
+    }
+  }
+
+  /**
+   * Diagnostic Test Connection tool
+   */
+  async testConnection(customUrl = null, customBranch = null) {
+    const branch = customBranch ? normalizeBranchKey(customBranch) : this.getBranchKey();
+    const testUrl = (customUrl || (await this.getSyncEndpoints())[0]).trim();
+
+    try {
+      const pingUrl = `${testUrl}?action=TEST_CONNECTION&branch=${encodeURIComponent(branch)}&t=${Date.now()}`;
+      const res = await fetch(pingUrl, { method: 'GET' });
+      if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+      const data = await res.json();
+      return {
+        ok: true,
+        branch,
+        url: testUrl,
+        message: data.message || `Connected to Cloud Relay for branch [${branch}] ✓`
+      };
+    } catch (err) {
+      return {
+        ok: false,
+        branch,
+        url: testUrl,
+        message: err.message || 'Connection failed'
+      };
     }
   }
 }

@@ -6,9 +6,11 @@ import {
   Upload, Image as ImageIcon, QrCode, X, Eye, EyeOff, Crown,
   Download, DatabaseBackup, RotateCcw, Check, Edit2, KeyRound, Key, Layers, Power, PowerOff, ToggleLeft, ToggleRight,
   Receipt, Lock, Monitor, Mail, MessageSquare, Send, Copy, ExternalLink, CheckCircle2,
-  LayoutDashboard, ClipboardList, BarChart3, Package, UtensilsCrossed, Network, Settings as SettingsGear, User as UserIcon, Wifi
+  LayoutDashboard, ClipboardList, BarChart3, Package, UtensilsCrossed, Network, Settings as SettingsGear, User as UserIcon, Wifi,
+  RefreshCw, Building2, Globe
 } from 'lucide-react';
 import { testSendEmail, testSendSms, maskEmail, maskPhone } from '../services/OtpService';
+import cloudSyncService, { normalizeBranchKey } from '../services/cloudSyncService';
 import { Capacitor } from '@capacitor/core';
 import { Filesystem, Directory, Encoding } from '@capacitor/filesystem';
 import { Share } from '@capacitor/share';
@@ -131,6 +133,13 @@ export default function SuperAdminSettings({ currentUser }) {
 
   // Confirm dialog
   const [confirmDialog, setConfirmDialog] = useState({ isOpen: false, title: '', message: '', onConfirm: null, variant: 'primary' });
+
+  // Multi-Branch Cloud Sync state
+  const [branchIdentifier, setBranchIdentifier] = useState(() => cloudSyncService.getBranchKey());
+  const [cloudRelayUrl, setCloudRelayUrl] = useState(() => cloudSyncService.getGasUrl());
+  const [isTestingSync, setIsTestingSync] = useState(false);
+  const [isSyncingNow, setIsSyncingNow] = useState(false);
+  const [syncTestResult, setSyncTestResult] = useState(null);
 
   const logoInputRef = useRef(null);
   const iconInputRef = useRef(null);
@@ -617,38 +626,174 @@ export default function SuperAdminSettings({ currentUser }) {
     }
   };
 
-  const googleAppsScriptSnippet = `function doPost(e) {
+  const googleAppsScriptSnippet = `/**
+ * Aster POS — Multi-Branch Two-Way Cloud Relay & OTP Mailer
+ * --------------------------------------------------------------------------------
+ * Fully supports isolated multi-shop branches and free Gmail OTP.
+ */
+var FOLDER_NAME = "AsterPOS_Sync_Branches";
+
+function doGet(e) {
   try {
-    var data = JSON.parse(e.postData ? e.postData.contents : "{}");
-    var to = data.to;
-    var subject = data.subject || ("Aster POS Verification: " + data.code);
-    var body = "Aster POS Verification Code: " + data.code + "\\nAction: " + (data.actionName || "Override");
-    var htmlBody = "<div style='font-family: sans-serif; padding: 20px; border: 1px solid #e2e8f0; border-radius: 12px; max-width: 480px;'>" +
-      "<h2 style='color: #0f172a; margin-top: 0;'>Aster POS Verification</h2>" +
-      "<p style='color: #475569;'>Action requested: <strong>" + (data.actionName || "Authorization Override") + "</strong></p>" +
-      "<div style='text-align: center; margin: 24px 0; padding: 18px; background: #eff6ff; border-radius: 8px; border: 1px dashed #3b82f6;'>" +
-      "<div style='font-size: 11px; font-weight: bold; color: #2563eb; text-transform: uppercase;'>Your 6-Digit OTP</div>" +
-      "<div style='font-size: 32px; font-weight: 800; letter-spacing: 6px; color: #1e3a8a;'>" + data.code + "</div>" +
-      "<div style='font-size: 11px; color: #64748b; margin-top: 6px;'>Valid for 5 minutes. Do not share.</div>" +
-      "</div>" +
-      "<p style='font-size: 11px; color: #94a3b8; text-align: center; margin: 0;'>Powered by AirLuna Creations</p>" +
-      "</div>";
+    var params = e ? e.parameter : {};
+    var action = (params && params.action) ? params.action : "";
+    var branch = normalizeBranch(params ? params.branch : "default");
 
-    MailApp.sendEmail({
-      to: to,
-      subject: subject,
-      body: body + "\\n\\nPowered by AirLuna Creations",
-      htmlBody: htmlBody,
-      name: "Aster POS (a***s@gmail.com)"
+    if (action === "TEST_CONNECTION" || action === "PING") {
+      return createJsonResponse({
+        success: true,
+        status: "active",
+        service: "Aster POS Multi-Branch Cloud Relay",
+        branch: branch,
+        message: "Successfully connected to Aster Cloud Relay for branch [" + branch + "] ✓",
+        timestamp: Date.now()
+      });
+    }
+
+    if (action === "GET_SYNC_DATA") {
+      var snapshot = loadBranchSnapshot(branch);
+      var metadata = loadBranchMetadata(branch);
+      return createJsonResponse({
+        success: true,
+        branch: branch,
+        snapshot: snapshot,
+        source: metadata.lastSource || "POS",
+        mutationTimestamp: metadata.mutationTimestamp || 0,
+        updatedAt: metadata.updatedAt || null
+      });
+    }
+
+    if (action === "LIST_BRANCHES") {
+      return createJsonResponse({
+        success: true,
+        branches: listAllBranches()
+      });
+    }
+
+    return createJsonResponse({
+      status: "active",
+      service: "Aster POS Multi-Branch Cloud Relay",
+      poweredBy: "AirLuna Creations",
+      sender: "airlunacreations@gmail.com"
     });
-
-    return ContentService.createTextOutput(JSON.stringify({ success: true })).setMimeType(ContentService.MimeType.JSON);
-  } catch (err) {
-    return ContentService.createTextOutput(JSON.stringify({ success: false, error: err.toString() })).setMimeType(ContentService.MimeType.JSON);
+  } catch (error) {
+    return createJsonResponse({ success: false, error: error.toString() });
   }
 }
-function doGet(e) {
-  return ContentService.createTextOutput(JSON.stringify({ status: "active" })).setMimeType(ContentService.MimeType.JSON);
+
+function doPost(e) {
+  try {
+    var raw = e.postData ? e.postData.contents : "{}";
+    var data = {};
+    try { data = JSON.parse(raw); } catch (err) { data = {}; }
+
+    var action = data.action || (e.parameter ? e.parameter.action : "");
+    var branch = normalizeBranch(data.branch || (e.parameter ? e.parameter.branch : "default"));
+
+    if (action === "PUSH_SYNC_DATA" || action === "PUSH_WEB_UPDATE") {
+      var source = data.source || (action === "PUSH_WEB_UPDATE" ? "WEB" : "POS");
+      var timestamp = data.timestamp || Date.now();
+      saveBranchSnapshot(branch, data, source, timestamp);
+      return createJsonResponse({
+        success: true,
+        branch: branch,
+        source: source,
+        message: "Branch [" + branch + "] saved successfully (" + source + ")"
+      });
+    }
+
+    if (action === "SEND_OTP" || data.to) {
+      MailApp.sendEmail({
+        to: data.to,
+        subject: data.subject || ("Aster POS Verification: " + data.code),
+        body: "Aster POS Verification Code: " + data.code + "\\nAction: " + (data.actionName || "Override") + "\\nBranch: " + branch,
+        name: "Aster POS (" + branch + ")"
+      });
+      return createJsonResponse({ success: true, message: "Email sent to " + data.to });
+    }
+
+    return createJsonResponse({ success: false, message: "Unrecognized action: " + action });
+  } catch (error) {
+    return createJsonResponse({ success: false, error: error.toString() });
+  }
+}
+
+function createJsonResponse(data) {
+  return ContentService.createTextOutput(JSON.stringify(data)).setMimeType(ContentService.MimeType.JSON);
+}
+
+function normalizeBranch(str) {
+  if (!str) return "default";
+  var clean = String(str).toLowerCase().trim();
+  clean = clean.replace(/[^a-z0-9_@.-]/g, "_");
+  return clean || "default";
+}
+
+function getBranchFolder() {
+  try {
+    var folders = DriveApp.getFoldersByName(FOLDER_NAME);
+    return folders.hasNext() ? folders.next() : DriveApp.createFolder(FOLDER_NAME);
+  } catch (e) { return null; }
+}
+
+function saveBranchSnapshot(branchKey, dataObj, source, timestamp) {
+  var safeKey = normalizeBranch(branchKey);
+  var payloadString = JSON.stringify(dataObj);
+  var metaObj = { branch: safeKey, updatedAt: new Date().toISOString(), lastSource: source, mutationTimestamp: timestamp };
+  try {
+    var folder = getBranchFolder();
+    if (folder) {
+      var f = folder.getFilesByName("branch_" + safeKey + ".json");
+      if (f.hasNext()) { f.next().setContent(payloadString); }
+      else { folder.createFile("branch_" + safeKey + ".json", payloadString, MimeType.PLAIN_TEXT); }
+
+      var mf = folder.getFilesByName("meta_" + safeKey + ".json");
+      if (mf.hasNext()) { mf.next().setContent(JSON.stringify(metaObj)); }
+      else { folder.createFile("meta_" + safeKey + ".json", JSON.stringify(metaObj), MimeType.PLAIN_TEXT); }
+      return;
+    }
+  } catch (e) {}
+}
+
+function loadBranchSnapshot(branchKey) {
+  var safeKey = normalizeBranch(branchKey);
+  try {
+    var folder = getBranchFolder();
+    if (folder) {
+      var f = folder.getFilesByName("branch_" + safeKey + ".json");
+      if (f.hasNext()) { return JSON.parse(f.next().getBlob().getDataAsString()); }
+    }
+  } catch (e) {}
+  return null;
+}
+
+function loadBranchMetadata(branchKey) {
+  var safeKey = normalizeBranch(branchKey);
+  try {
+    var folder = getBranchFolder();
+    if (folder) {
+      var f = folder.getFilesByName("meta_" + safeKey + ".json");
+      if (f.hasNext()) { return JSON.parse(f.next().getBlob().getDataAsString()); }
+    }
+  } catch (e) {}
+  return {};
+}
+
+function listAllBranches() {
+  var list = [];
+  try {
+    var folder = getBranchFolder();
+    if (folder) {
+      var files = folder.getFiles();
+      while (files.hasNext()) {
+        var n = files.next().getName();
+        if (n.indexOf("meta_") === 0 && n.indexOf(".json") > 0) {
+          list.push(n.replace("meta_", "").replace(".json", ""));
+        }
+      }
+    }
+  } catch (e) {}
+  return list;
 }`;
 
   const handleCopyGoogleScript = () => {
@@ -656,11 +801,56 @@ function doGet(e) {
     flash('Google Apps Script code copied to clipboard!');
   };
 
+  const handleTestCloudConnection = async () => {
+    setIsTestingSync(true);
+    setSyncTestResult(null);
+    try {
+      const result = await cloudSyncService.testConnection(cloudRelayUrl, branchIdentifier);
+      setSyncTestResult(result);
+      if (result.ok) {
+        flash(result.message);
+      } else {
+        flash(result.message || 'Connection failed');
+      }
+    } catch (err) {
+      setSyncTestResult({ ok: false, message: err.message || 'Error testing connection' });
+      flash('Connection test failed');
+    } finally {
+      setIsTestingSync(false);
+    }
+  };
+
+  const handleSaveBranchSettings = async () => {
+    const cleanKey = normalizeBranchKey(branchIdentifier);
+    await cloudSyncService.setBranch(cleanKey);
+    const current = await db.app_settings.get('default') || {};
+    await db.app_settings.put({
+      ...current,
+      id: 'default',
+      branchIdentifier: cleanKey,
+      googleAppsScriptUrl: (cloudRelayUrl || '').trim() || current.googleAppsScriptUrl
+    });
+    flash(`Branch isolation saved: ${cleanKey}`);
+  };
+
+  const handleTriggerBranchSync = async () => {
+    setIsSyncingNow(true);
+    try {
+      await cloudSyncService.syncAll();
+      flash('Sync completed successfully!');
+    } catch (err) {
+      flash('Sync error: ' + (err.message || 'Failed'));
+    } finally {
+      setIsSyncingNow(false);
+    }
+  };
+
   const sections = [
     { id: 'categories', label: 'Categories', icon: Layers },
     { id: 'branding', label: 'Branding', icon: Store, tourId: 'audit-store-name' },
     { id: 'qrcodes', label: 'QR Codes', icon: QrCode },
     { id: 'users', label: 'Staff', icon: Users, tourId: 'audit-staff-btn' },
+    { id: 'cloud_sync', label: 'Multi-Branch Sync', icon: Wifi },
     { id: 'otp', label: 'OTP Gateways', icon: Send },
     { id: 'system', label: 'System', icon: DatabaseBackup, tourId: 'audit-logs' },
     { id: 'license', label: 'License', icon: KeyRound }
@@ -1433,6 +1623,128 @@ function doGet(e) {
                   </div>
                 </div>
               ))}
+            </div>
+          </div>
+        )}
+
+        {/* ===== MULTI-BRANCH CLOUD SYNC SECTION ===== */}
+        {activeSection === 'cloud_sync' && (
+          <div className="max-w-3xl space-y-6">
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 bg-surface p-5 rounded-2xl border border-border">
+              <div>
+                <h3 className="text-lg font-bold text-text-main flex items-center gap-2">
+                  <Building2 className="text-primary" size={20} /> Multi-Branch Cloud Sync &amp; Isolation
+                </h3>
+                <p className="text-xs text-text-light mt-0.5">
+                  Isolate shop data by <strong>Manager Email</strong> or unique <strong>Branch Code</strong>. No data leaks between branches.
+                </p>
+              </div>
+              <button
+                onClick={handleSaveBranchSettings}
+                className="min-h-[44px] px-5 bg-primary hover:bg-primary-dark text-white rounded-xl font-bold flex items-center gap-2 text-sm shadow-md transition-all active:scale-95"
+              >
+                <Save size={16} /> Save Branch Config
+              </button>
+            </div>
+
+            {/* Active Partition Info */}
+            <div className="bg-surface p-5 sm:p-6 rounded-2xl border border-border space-y-4">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-text-light uppercase tracking-wider">Active Shop Partition</span>
+                <span className="px-3 py-1 rounded-full text-xs font-mono font-bold bg-primary/10 text-primary border border-primary/20">
+                  {cloudSyncService.getBranchKey()}
+                </span>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-text-main uppercase tracking-wider mb-1.5">
+                  Shop Branch Identifier / Manager Email <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  value={branchIdentifier}
+                  onChange={e => setBranchIdentifier(e.target.value)}
+                  placeholder="e.g. manager.downtown@cafe.com or BRANCH-001"
+                  className="w-full h-11 px-3.5 bg-background border border-border rounded-xl text-sm font-semibold text-text-main focus:outline-none focus:border-primary"
+                />
+                <p className="text-[11px] text-text-light mt-1.5">
+                  This POS terminal will exclusively sync products, sales, stock, and staff with this partition. Use the same email to log into the Web Manager portal.
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-text-main uppercase tracking-wider mb-1.5">
+                  Cloud Relay Endpoint (Google Apps Script Web App URL)
+                </label>
+                <input
+                  type="url"
+                  value={cloudRelayUrl}
+                  onChange={e => setCloudRelayUrl(e.target.value)}
+                  placeholder="https://script.google.com/macros/s/.../exec"
+                  className="w-full h-11 px-3.5 bg-background border border-border rounded-xl text-xs font-mono text-text-main focus:outline-none focus:border-primary"
+                />
+              </div>
+
+              {syncTestResult && (
+                <div className={`p-3.5 rounded-xl border text-xs font-semibold flex items-center gap-2.5 ${
+                  syncTestResult.ok ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-600 dark:text-emerald-400' : 'bg-red-500/10 border-red-500/20 text-red-600 dark:text-red-400'
+                }`}>
+                  {syncTestResult.ok ? <CheckCircle2 size={16} /> : <AlertTriangle size={16} />}
+                  <span>{syncTestResult.message}</span>
+                </div>
+              )}
+
+              <div className="flex flex-wrap gap-2.5 pt-2">
+                <button
+                  type="button"
+                  onClick={handleTestCloudConnection}
+                  disabled={isTestingSync || !branchIdentifier.trim()}
+                  className="min-h-[42px] px-4 rounded-xl border border-border bg-background hover:bg-surface-hover text-text-main text-xs font-bold flex items-center gap-2 transition-all disabled:opacity-50"
+                >
+                  <Wifi size={14} className={isTestingSync ? 'animate-pulse text-primary' : 'text-primary'} />
+                  <span>{isTestingSync ? 'Connecting to Cloud...' : 'Test Cloud Connection'}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={handleTriggerBranchSync}
+                  disabled={isSyncingNow}
+                  className="min-h-[42px] px-4 rounded-xl bg-primary hover:bg-primary-dark text-white text-xs font-bold flex items-center gap-2 transition-all disabled:opacity-50"
+                >
+                  <RefreshCw size={14} className={isSyncingNow ? 'animate-spin' : ''} />
+                  <span>{isSyncingNow ? 'Syncing...' : 'Sync Now with Cloud'}</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Google Apps Script Deployment Instructions */}
+            <div className="bg-surface p-5 sm:p-6 rounded-2xl border border-border space-y-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h4 className="text-sm font-bold text-text-main flex items-center gap-2">
+                    <Globe size={16} className="text-primary" /> Google Apps Script Cloud Relay Setup
+                  </h4>
+                  <p className="text-xs text-text-light mt-0.5">
+                    Free, permanent backend for both multi-branch sync and OTP delivery.
+                  </p>
+                </div>
+                <button
+                  onClick={handleCopyGoogleScript}
+                  className="px-3 py-1.5 bg-background hover:bg-surface-hover border border-border rounded-lg text-xs font-bold text-text-main flex items-center gap-1.5 transition-colors"
+                >
+                  <Copy size={13} /> Copy Relay Code
+                </button>
+              </div>
+
+              <div className="bg-background rounded-xl p-4 border border-border text-xs text-text-light space-y-2 leading-relaxed">
+                <p className="font-bold text-text-main">To update your Google Apps Script for Multi-Branch support:</p>
+                <ol className="list-decimal pl-5 space-y-1">
+                  <li>Open <a href="https://script.google.com" target="_blank" rel="noreferrer" className="text-primary font-semibold underline">script.google.com</a> under <strong>airlunacreations@gmail.com</strong>.</li>
+                  <li>Click on your existing <strong>Aster POS</strong> script project.</li>
+                  <li>Click <strong>Copy Relay Code</strong> above, paste it into <code>Code.gs</code>, replacing everything.</li>
+                  <li>Click <strong>Deploy &gt; Manage deployments</strong> &gt; Edit (pencil icon).</li>
+                  <li>Change Version to <strong>New version</strong> and click <strong>Deploy</strong>.</li>
+                </ol>
+              </div>
             </div>
           </div>
         )}
