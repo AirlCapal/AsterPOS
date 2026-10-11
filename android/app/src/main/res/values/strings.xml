@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Aster POS</string>
+    <string name="title_activity_main">Aster POS</string>
+    <string name="package_name">com.aster.pos</string>
+    <string name="custom_url_scheme">com.aster.pos</string>
+</resources>

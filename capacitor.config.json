@@ -1,0 +1,10 @@
+{
+  "appId": "com.aster.pos",
+  "appName": "Aster POS",
+  "webDir": "dist",
+  "bundledWebRuntime": false,
+  "server": {
+    "androidScheme": "http",
+    "cleartext": true
+  }
+}

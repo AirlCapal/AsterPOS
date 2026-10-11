@@ -1,0 +1,215 @@
+@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;900&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --color-primary: var(--color-primary);
+  --color-primary-dark: var(--color-primary-dark);
+  --color-secondary: var(--color-secondary);
+  --color-accent: var(--color-accent);
+  --color-background: var(--color-background);
+  --color-surface: var(--color-surface);
+  --color-surface-hover: var(--color-surface-hover);
+  --color-text-main: var(--color-text-main);
+  --color-text-light: var(--color-text-light);
+  --color-border: var(--color-border);
+}
+
+/* ═══ Light Theme ═══ Clean cream + warm amber espresso accents */
+:root, .theme-light {
+  --color-primary: #92400e;
+  --color-primary-dark: #78350f;
+  --color-secondary: #fef3c7;
+  --color-accent: #d97706;
+  --color-background: #faf7f5;
+  --color-surface: #ffffff;
+  --color-surface-hover: #fdf8f4;
+  --color-text-main: #1e1b18;
+  --color-text-light: #78716c;
+  --color-border: #e7e0d9;
+}
+
+/* ═══ Charcoal Theme ═══ Dark gray + warm amber glow */
+.theme-gray {
+  --color-primary: #d97706;
+  --color-primary-dark: #b45309;
+  --color-secondary: #3f3f46;
+  --color-accent: #fbbf24;
+  --color-background: #1e1b18;
+  --color-surface: #2a2522;
+  --color-surface-hover: #3b3430;
+  --color-text-main: #faf7f5;
+  --color-text-light: #a8a29e;
+  --color-border: #44403c;
+}
+
+/* ═══ Dark Theme ═══ Deep espresso + golden highlights */
+.theme-dark {
+  --color-primary: #f59e0b;
+  --color-primary-dark: #d97706;
+  --color-secondary: #1c1917;
+  --color-accent: #10b981;
+  --color-background: #0c0a09;
+  --color-surface: #1c1917;
+  --color-surface-hover: #292524;
+  --color-text-main: #fafaf9;
+  --color-text-light: #a8a29e;
+  --color-border: #292524;
+}
+
+* {
+  -webkit-tap-highlight-color: transparent;
+  -webkit-touch-callout: none;
+}
+
+html {
+  overflow: hidden;
+  height: 100%;
+}
+
+body {
+  background-color: var(--color-background);
+  color: var(--color-text-main);
+  font-family: 'Poppins', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  height: 100%;
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
+#root {
+  height: 100%;
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-text-light);
+}
+
+/* Hide scrollbar on mobile for cleaner look */
+.scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
+
+/* Smooth transitions for theme changes */
+body,
+.bg-background,
+.bg-surface,
+.bg-surface-hover,
+.text-text-main,
+.text-text-light,
+.border-border {
+  transition: background-color 0.3s ease, color 0.3s ease, border-color 0.3s ease;
+}
+
+/* Input focus styles */
+input:focus,
+select:focus {
+  outline: none;
+}
+
+/* Prevent zoom on input focus (iOS) */
+input[type="text"],
+input[type="number"],
+select,
+textarea {
+  font-size: 16px;
+}
+
+/* Minimum touch targets for POS usability (rush-hour-safe) */
+button, [role="button"] {
+  min-height: 44px;
+}
+
+/* Compact buttons opt-out (for inline/icon-group elements that need smaller sizing) */
+.btn-compact {
+  min-height: 32px !important;
+}
+
+
+/* Safe area insets for notched devices */
+@supports (padding-top: env(safe-area-inset-top)) {
+  .safe-top { padding-top: env(safe-area-inset-top); }
+  .safe-bottom { padding-bottom: env(safe-area-inset-bottom); }
+}
+
+/* Animate-in utility for modals */
+@keyframes fadeIn {
+  from { opacity: 0; transform: scale(0.97) translateY(8px); }
+  to { opacity: 1; transform: scale(1) translateY(0); }
+}
+.animate-in {
+  animation: fadeIn 0.2s ease-out;
+}
+
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  10%, 30%, 50%, 70%, 90% { transform: translateX(-5px); }
+  20%, 40%, 60%, 80% { transform: translateX(5px); }
+}
+.animate-shake {
+  animation: shake 0.4s cubic-bezier(.36,.07,.19,.97) both;
+}
+
+/* Print styles for thermal receipt */
+@media print {
+  /* Hide everything */
+  html, body {
+    height: auto !important;
+    overflow: visible !important;
+    background: white !important;
+  }
+  body > * {
+    display: none !important;
+  }
+
+  /* Show only the print-only receipt element */
+  #thermal-receipt-print {
+    display: block !important;
+    visibility: visible !important;
+    position: absolute !important;
+    left: 0 !important;
+    top: 0 !important;
+    width: 80mm !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: white !important;
+    color: black !important;
+    z-index: 99999 !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+  #thermal-receipt-print * {
+    visibility: visible !important;
+    color: black !important;
+    background: white !important;
+  }
+
+  /* Zero page margins for thermal printers */
+  @page {
+    size: 80mm auto;
+    margin: 0;
+  }
+
+  /* Force crisp text rendering */
+  * {
+    text-shadow: none !important;
+    box-shadow: none !important;
+    -webkit-font-smoothing: auto !important;
+  }
+}

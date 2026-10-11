@@ -1,0 +1,6 @@
+{
+	"appId": "com.aster.pos",
+	"appName": "Aster POS",
+	"webDir": "dist",
+	"bundledWebRuntime": false
+}
