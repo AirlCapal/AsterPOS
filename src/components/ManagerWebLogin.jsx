@@ -1,11 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { db, ROLE_LABELS } from '../db';
-import { Lock, User, KeyRound, Coffee, ShieldAlert, ArrowRight, Eye, EyeOff, RefreshCw, Sparkles, CheckCircle2 } from 'lucide-react';
-import { maskEmail } from '../services/OtpService';
+import { db } from '../db';
+import {
+  Coffee, ShieldAlert, ArrowRight, Eye, EyeOff, RefreshCw,
+  Sparkles, CheckCircle2, Sun, Moon, Monitor, Wifi,
+  BarChart3, Package, Users, ShieldCheck
+} from 'lucide-react';
 import cloudSyncService from '../services/cloudSyncService';
 
-export default function ManagerWebLogin({ onLoginSuccess }) {
+export default function ManagerWebLogin({ onLoginSuccess, theme, setTheme }) {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -14,7 +17,6 @@ export default function ManagerWebLogin({ onLoginSuccess }) {
   const [isCloudSyncing, setIsCloudSyncing] = useState(false);
   const [syncStatusMsg, setSyncStatusMsg] = useState('');
 
-  const users = useLiveQuery(() => db.users.toArray()) || [];
   const settings = useLiveQuery(() => db.app_settings.get('default')) || {};
 
   // Auto-sync with cloud on mount so web portal fetches latest credentials and orders
@@ -27,7 +29,7 @@ export default function ManagerWebLogin({ onLoginSuccess }) {
       if (isMounted) {
         setIsCloudSyncing(false);
         if (snapshot) {
-          setSyncStatusMsg('Connected to live POS database ✓');
+          setSyncStatusMsg('Connected to live POS database');
         } else {
           setSyncStatusMsg('');
         }
@@ -38,6 +40,12 @@ export default function ManagerWebLogin({ onLoginSuccess }) {
 
     return () => { isMounted = false; };
   }, []);
+
+  const handleQuickFill = (u, p) => {
+    setUsername(u);
+    setPassword(p);
+    setErrorMsg('');
+  };
 
   const handleLogin = async (e) => {
     e.preventDefault();
@@ -53,7 +61,6 @@ export default function ManagerWebLogin({ onLoginSuccess }) {
     setIsSubmitting(true);
 
     try {
-      // Find matching manager or super_admin account
       const allUsers = await db.users.toArray();
       const matched = allUsers.find(u => {
         const uRole = u.role;
@@ -62,7 +69,7 @@ export default function ManagerWebLogin({ onLoginSuccess }) {
 
         const uName = (u.username || '').toLowerCase();
         const uEmail = (u.email || '').toLowerCase();
-        const userMatches = uName === cleanUser || uEmail === cleanUser || u.name.toLowerCase() === cleanUser;
+        const userMatches = uName === cleanUser || uEmail === cleanUser || (u.name && u.name.toLowerCase() === cleanUser);
         const passMatches = (u.password && u.password === cleanPass) || (u.pin && u.pin === cleanPass);
 
         return userMatches && passMatches;
@@ -112,45 +119,80 @@ export default function ManagerWebLogin({ onLoginSuccess }) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex flex-col md:flex-row bg-[#faf5ef] dark:bg-[#120f0d] text-text-main overflow-y-auto">
-      {/* Left Identity Banner */}
-      <div className="w-full md:w-1/2 lg:w-5/12 bg-gradient-to-br from-[#1c1815] via-[#231e1a] to-[#141210] text-white p-8 md:p-14 flex flex-col justify-between relative overflow-hidden">
-        <div className="absolute -top-24 -left-24 w-80 h-80 rounded-full bg-amber-500/15 blur-3xl pointer-events-none" />
-        <div className="absolute -bottom-24 -right-24 w-80 h-80 rounded-full bg-orange-500/15 blur-3xl pointer-events-none" />
+    <div className="web-portal min-h-screen w-full flex flex-col md:flex-row bg-background text-text-main selection:bg-primary/20 selection:text-primary">
 
+      {/* ── Left Identity Banner (Hidden on mobile or compact, prominent on md+) ── */}
+      <div className="w-full md:w-5/12 lg:w-1/2 bg-gradient-to-br from-stone-900 via-stone-950 to-neutral-950 text-white p-6 sm:p-10 lg:p-16 flex flex-col justify-between relative overflow-hidden shrink-0 border-b md:border-b-0 md:border-r border-border/20">
+
+        {/* Ambient Gradient Glows */}
+        <div className="absolute -top-32 -left-32 w-96 h-96 rounded-full bg-amber-500/10 blur-3xl pointer-events-none" />
+        <div className="absolute -bottom-32 -right-32 w-96 h-96 rounded-full bg-orange-600/10 blur-3xl pointer-events-none" />
+        <div className="absolute inset-0 bg-[radial-gradient(#ffffff08_1px,transparent_1px)] [background-size:20px_20px] pointer-events-none opacity-40" />
+
+        {/* Brand Header */}
         <div className="relative z-10">
-          <div className="flex items-center gap-3 mb-8">
-            <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-amber-500 to-orange-400 flex items-center justify-center shadow-lg shadow-amber-500/30 ring-2 ring-amber-400/30">
-              <Coffee size={24} className="text-white" />
+          <div className="flex items-center gap-3.5 mb-6 md:mb-12">
+            <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-2xl bg-gradient-to-tr from-amber-600 to-amber-500 flex items-center justify-center shadow-lg shadow-amber-600/20 ring-1 ring-white/20 shrink-0">
+              {settings?.logoDataUrl ? (
+                <img src={settings.logoDataUrl} alt="Logo" className="w-full h-full rounded-2xl object-cover" />
+              ) : (
+                <Coffee size={24} className="text-white" />
+              )}
             </div>
             <div>
-              <h1 className="text-xl font-black tracking-tight">{settings?.cafeName || 'Aster POS'}</h1>
-              <span className="text-[10px] font-bold tracking-widest uppercase text-amber-400 bg-amber-400/10 px-2 py-0.5 rounded border border-amber-400/20">
-                Manager Portal
-              </span>
+              <div className="flex items-center gap-2">
+                <h1 className="text-lg sm:text-xl font-bold tracking-tight text-white leading-tight">
+                  {settings?.cafeName || 'Aster POS'}
+                </h1>
+                <span className="text-[10px] font-bold tracking-wider uppercase text-amber-400 bg-amber-400/15 px-2 py-0.5 rounded-full border border-amber-400/25">
+                  Web Portal
+                </span>
+              </div>
+              <p className="text-[11px] text-stone-400 font-medium">Store Operations &amp; Management</p>
             </div>
           </div>
 
-          <div className="space-y-4 my-8 max-w-md">
-            <h2 className="text-2xl sm:text-3xl font-extrabold tracking-tight leading-tight">
-              Real-time store oversight, analytics &amp; controls.
+          {/* Heading & Value Proposition (hidden on small mobile to save space) */}
+          <div className="hidden sm:block space-y-4 my-6 lg:my-10 max-w-lg">
+            <h2 className="text-2xl lg:text-4xl font-extrabold tracking-tight leading-tight text-white">
+              Real-time store oversight, analytics &amp; remote controls.
             </h2>
             <p className="text-xs sm:text-sm text-stone-400 leading-relaxed">
-              Designed exclusively for Managers and Store Owners. Access sales revenue, ingredient stocks, menu configurations, and audit trails securely from any web browser.
+              Designed exclusively for Managers and Store Owners. Monitor live transactions, restock ingredients, revise menu pricing, and manage staff permissions securely from any web browser.
             </p>
+          </div>
+
+          {/* Features Highlights (visible md+) */}
+          <div className="hidden md:grid grid-cols-1 sm:grid-cols-2 gap-3 mt-8">
+            <div className="flex items-center gap-2.5 p-3 rounded-xl bg-white/5 border border-white/10">
+              <BarChart3 size={16} className="text-amber-400 shrink-0" />
+              <span className="text-xs font-semibold text-stone-200">Live Sales Analytics</span>
+            </div>
+            <div className="flex items-center gap-2.5 p-3 rounded-xl bg-white/5 border border-white/10">
+              <Package size={16} className="text-amber-400 shrink-0" />
+              <span className="text-xs font-semibold text-stone-200">Stock &amp; Inventory</span>
+            </div>
+            <div className="flex items-center gap-2.5 p-3 rounded-xl bg-white/5 border border-white/10">
+              <Wifi size={16} className="text-emerald-400 shrink-0" />
+              <span className="text-xs font-semibold text-stone-200">Auto-Sync with POS</span>
+            </div>
+            <div className="flex items-center gap-2.5 p-3 rounded-xl bg-white/5 border border-white/10">
+              <ShieldCheck size={16} className="text-amber-400 shrink-0" />
+              <span className="text-xs font-semibold text-stone-200">Role-Based Access</span>
+            </div>
           </div>
         </div>
 
-        {/* Live sync indicator */}
-        <div className="relative z-10 pt-6 border-t border-white/10">
+        {/* Live POS Relay Status */}
+        <div className="relative z-10 pt-4 md:pt-8 border-t border-white/10 mt-6 md:mt-10">
           <div className="flex items-center justify-between text-xs text-stone-400">
             <div className="flex items-center gap-2">
-              <span className={`w-2.5 h-2.5 rounded-full ${isCloudSyncing ? 'bg-amber-400 animate-ping' : 'bg-emerald-400'}`} />
-              <span className="font-semibold text-stone-300">
-                {isCloudSyncing ? 'Syncing POS data...' : 'Cloud Relay Online'}
+              <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${isCloudSyncing ? 'bg-amber-400 animate-ping' : 'bg-emerald-400'}`} />
+              <span className="font-semibold text-stone-300 text-[11px] sm:text-xs">
+                {isCloudSyncing ? 'Connecting to POS...' : 'Cloud Relay Online'}
               </span>
             </div>
-            <span className="text-[10px] text-stone-500 font-mono">Vercel Web App</span>
+            <span className="text-[10px] text-stone-500 font-mono hidden sm:inline">Vercel Cloud Edition</span>
           </div>
           {syncStatusMsg && (
             <p className="text-[11px] text-amber-300 mt-1 font-medium">{syncStatusMsg}</p>
@@ -158,18 +200,57 @@ export default function ManagerWebLogin({ onLoginSuccess }) {
         </div>
       </div>
 
-      {/* Right Login Form */}
-      <div className="flex-1 flex items-center justify-center p-6 sm:p-10 md:p-16 bg-surface dark:bg-[#1a1613]">
-        <div className="w-full max-w-sm space-y-6">
-          <div className="text-left">
-            <h3 className="text-2xl font-black text-text-main tracking-tight">Manager Sign In</h3>
-            <p className="text-xs text-text-light font-medium mt-1">
-              Use your assigned Manager or Admin credentials to access the web dashboard.
+      {/* ── Right Login Form Area ── */}
+      <div className="flex-1 flex flex-col justify-between p-6 sm:p-10 lg:p-16 bg-surface relative">
+
+        {/* Top bar with Theme Switcher */}
+        <div className="flex items-center justify-between mb-8 sm:mb-12">
+          <div className="flex items-center gap-2 text-xs text-text-light font-medium">
+            <span className="w-2 h-2 rounded-full bg-primary" />
+            <span>Secure Manager Login</span>
+          </div>
+
+          {setTheme && (
+            <div className="flex items-center bg-surface-hover border border-border rounded-lg p-0.5">
+              <button
+                type="button"
+                onClick={() => setTheme('theme-light')}
+                className={`p-1.5 rounded-md transition-all ${theme === 'theme-light' ? 'bg-primary text-white shadow-sm' : 'text-text-light hover:text-text-main'}`}
+                title="Light Theme"
+              >
+                <Sun size={13} />
+              </button>
+              <button
+                type="button"
+                onClick={() => setTheme('theme-gray')}
+                className={`p-1.5 rounded-md transition-all ${theme === 'theme-gray' ? 'bg-primary text-white shadow-sm' : 'text-text-light hover:text-text-main'}`}
+                title="Charcoal Theme"
+              >
+                <Monitor size={13} />
+              </button>
+              <button
+                type="button"
+                onClick={() => setTheme('theme-dark')}
+                className={`p-1.5 rounded-md transition-all ${theme === 'theme-dark' ? 'bg-primary text-white shadow-sm' : 'text-text-light hover:text-text-main'}`}
+                title="Dark Theme"
+              >
+                <Moon size={13} />
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* Center Card */}
+        <div className="w-full max-w-md mx-auto my-auto space-y-6">
+          <div>
+            <h3 className="text-2xl sm:text-3xl font-extrabold text-text-main tracking-tight">Sign In</h3>
+            <p className="text-xs sm:text-sm text-text-light font-medium mt-1.5">
+              Enter your manager credentials to manage your store online.
             </p>
           </div>
 
           {errorMsg && (
-            <div className="bg-red-500/10 border border-red-500/20 text-red-500 text-xs font-semibold p-3.5 rounded-xl flex items-center gap-2 animate-shake">
+            <div className="bg-red-500/10 border border-red-500/20 text-red-600 dark:text-red-400 text-xs font-semibold p-3.5 rounded-xl flex items-center gap-2.5 animate-shake">
               <ShieldAlert size={16} className="shrink-0" />
               <span>{errorMsg}</span>
             </div>
@@ -180,20 +261,15 @@ export default function ManagerWebLogin({ onLoginSuccess }) {
               <label className="block text-xs font-bold text-text-light uppercase tracking-wider mb-1.5">
                 Username or Email
               </label>
-              <div className="relative">
-                <div className="absolute left-3.5 top-1/2 -translate-y-1/2 text-text-light">
-                  <User size={16} />
-                </div>
-                <input
-                  type="text"
-                  value={username}
-                  onChange={e => setUsername(e.target.value)}
-                  placeholder="e.g. admin or manager"
-                  className="w-full h-12 pl-10 pr-4 bg-background border border-border rounded-xl text-text-main text-sm font-semibold focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
-                  autoFocus
-                  required
-                />
-              </div>
+              <input
+                type="text"
+                value={username}
+                onChange={e => setUsername(e.target.value)}
+                placeholder="e.g. admin or manager"
+                className="w-full h-11 px-3.5 bg-background border border-border rounded-xl text-text-main text-sm font-medium focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 transition-all placeholder:text-text-light/50"
+                autoFocus
+                required
+              />
             </div>
 
             <div>
@@ -203,23 +279,20 @@ export default function ManagerWebLogin({ onLoginSuccess }) {
                 </label>
               </div>
               <div className="relative">
-                <div className="absolute left-3.5 top-1/2 -translate-y-1/2 text-text-light">
-                  <KeyRound size={16} />
-                </div>
                 <input
                   type={showPassword ? 'text' : 'password'}
                   value={password}
                   onChange={e => setPassword(e.target.value)}
                   placeholder="••••••••"
-                  className="w-full h-12 pl-10 pr-10 bg-background border border-border rounded-xl text-text-main text-sm font-semibold focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
+                  className="w-full h-11 pl-3.5 pr-10 bg-background border border-border rounded-xl text-text-main text-sm font-medium focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 transition-all placeholder:text-text-light/50"
                   required
                 />
                 <button
                   type="button"
                   onClick={() => setShowPassword(!showPassword)}
-                  className="absolute right-3.5 top-1/2 -translate-y-1/2 text-text-light hover:text-text-main transition-colors"
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-text-light hover:text-text-main transition-colors p-1"
                 >
-                  {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                  {showPassword ? <EyeOff size={15} /> : <Eye size={15} />}
                 </button>
               </div>
             </div>
@@ -227,32 +300,54 @@ export default function ManagerWebLogin({ onLoginSuccess }) {
             <button
               type="submit"
               disabled={isSubmitting}
-              className="w-full h-12 bg-primary hover:bg-primary-dark text-white rounded-xl font-bold text-sm shadow-lg shadow-primary/25 transition-all active:scale-[0.98] disabled:opacity-50 flex items-center justify-center gap-2 mt-2"
+              className="w-full h-11 bg-primary hover:bg-primary-dark text-white rounded-xl font-bold text-sm shadow-md shadow-primary/20 transition-all active:scale-[0.98] disabled:opacity-50 flex items-center justify-center gap-2 mt-3 cursor-pointer"
             >
               {isSubmitting ? (
                 <>
-                  <RefreshCw size={16} className="animate-spin" />
+                  <RefreshCw size={15} className="animate-spin" />
                   <span>Signing in...</span>
                 </>
               ) : (
                 <>
                   <span>Sign In to Dashboard</span>
-                  <ArrowRight size={16} />
+                  <ArrowRight size={15} />
                 </>
               )}
             </button>
           </form>
 
-          {/* Quick Default Credentials Tip */}
-          <div className="p-3.5 bg-amber-500/5 border border-amber-500/20 rounded-xl space-y-1.5 text-xs">
-            <p className="font-bold text-amber-700 dark:text-amber-400 flex items-center gap-1.5">
-              <Sparkles size={13} /> Default Manager Logins:
-            </p>
-            <div className="text-[11px] text-text-light space-y-1">
-              <p>• Admin: <strong className="text-text-main">admin</strong> / Password: <strong className="text-text-main">admin123</strong></p>
-              <p>• Manager: <strong className="text-text-main">manager</strong> / Password: <strong className="text-text-main">manager123</strong></p>
+          {/* Quick Demo Sign In Pills */}
+          <div className="pt-2 border-t border-border/60">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-[11px] font-bold text-text-light uppercase tracking-wider flex items-center gap-1">
+                <Sparkles size={11} className="text-amber-500" /> Default Credentials
+              </span>
+              <span className="text-[10px] text-text-light/70">Click to fill</span>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => handleQuickFill('admin', 'admin123')}
+                className="p-2.5 rounded-xl border border-border bg-background hover:bg-surface-hover hover:border-primary/40 text-left transition-all group"
+              >
+                <div className="text-xs font-bold text-text-main group-hover:text-primary">Super Admin</div>
+                <div className="text-[10px] text-text-light font-mono mt-0.5">admin / admin123</div>
+              </button>
+              <button
+                type="button"
+                onClick={() => handleQuickFill('manager', 'manager123')}
+                className="p-2.5 rounded-xl border border-border bg-background hover:bg-surface-hover hover:border-primary/40 text-left transition-all group"
+              >
+                <div className="text-xs font-bold text-text-main group-hover:text-primary">Store Manager</div>
+                <div className="text-[10px] text-text-light font-mono mt-0.5">manager / manager123</div>
+              </button>
             </div>
           </div>
+        </div>
+
+        {/* Footer */}
+        <div className="text-center mt-8 text-[11px] text-text-light/60 font-medium">
+          Aster POS Management Suite &bull; Multi-Branch Web Sync
         </div>
       </div>
     </div>

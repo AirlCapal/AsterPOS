@@ -213,3 +213,84 @@ button, [role="button"] {
     -webkit-font-smoothing: auto !important;
   }
 }
+
+/* ═══ Web Portal Overrides ═══ 
+   The POS has 44px min-height buttons for touch targets.
+   On the manager web portal, reduce button sizing for a proper SaaS look. */
+.web-portal button,
+.web-portal [role="button"] {
+  min-height: unset;
+}
+
+.web-portal .btn-web {
+  min-height: 36px;
+}
+
+/* Allow body scroll on web portal pages */
+.web-portal-root {
+  overflow: auto !important;
+}
+.web-portal-root html,
+.web-portal-root body {
+  overflow: auto !important;
+}
+
+/* Sidebar slide-in animation */
+@keyframes slideInLeft {
+  from { transform: translateX(-100%); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+.animate-slide-in-left {
+  animation: slideInLeft 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Fade-up animation for content transitions */
+@keyframes fadeUpIn {
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.animate-fade-up {
+  animation: fadeUpIn 0.35s ease-out;
+}
+
+/* Slide-in from right for toasts */
+@keyframes slideInRight {
+  from { transform: translateX(100%); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+.animate-slide-in-right {
+  animation: slideInRight 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* Breadcrumb separator */
+.breadcrumb-separator::before {
+  content: '›';
+  margin: 0 0.5rem;
+  color: var(--color-text-light);
+  font-weight: 600;
+}
+
+/* Custom sleek web scrollbars for .web-portal */
+.web-portal ::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+.web-portal ::-webkit-scrollbar-track {
+  background: transparent;
+}
+.web-portal ::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+  border-radius: 9999px;
+}
+.web-portal ::-webkit-scrollbar-thumb:hover {
+  background: var(--color-text-light);
+}
+
+/* Ensure nice focus outlines in web portal */
+.web-portal input:focus-visible,
+.web-portal select:focus-visible,
+.web-portal textarea:focus-visible {
+  outline: none;
+}
+
+

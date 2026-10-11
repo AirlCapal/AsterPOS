@@ -1228,16 +1228,14 @@ export default function App() {
       return (
         <div className="h-screen bg-background relative">
           <ManagerWebLogin
+            theme={theme}
+            setTheme={setTheme}
             onLoginSuccess={async (user) => {
               setCurrentUser(user);
               setActiveTab('dashboard');
               try { cloudSyncService.pullCloudData(); } catch {}
             }}
           />
-
-          {isInitializing && (
-            <CuteLoadingScreen onFinished={() => setIsInitializing(false)} minDuration={10500} />
-          )}
         </div>
       );
     }

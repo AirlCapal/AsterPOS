@@ -1,10 +1,12 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, ROLE_LABELS, hasMinRole } from '../db';
 import {
   BarChart3, Receipt, Package, UtensilsCrossed, Settings as SettingsIcon,
   Crown, User, LogOut, Sun, Moon, Monitor, RefreshCw, Coffee,
-  ChevronRight, Shield, ShieldCheck, Clock, ExternalLink, Menu, X, ArrowLeftRight
+  ChevronRight, Shield, ShieldCheck, Clock, ExternalLink, Menu, X,
+  ArrowUpRight, Wifi, WifiOff, Bell, ChevronDown, Upload, Download,
+  TrendingUp, AlertTriangle, Store
 } from 'lucide-react';
 import cloudSyncService from '../services/cloudSyncService';
 
@@ -22,6 +24,8 @@ export default function ManagerWebPortal({ currentUser, onLogout, theme, setThem
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [isPushingToPos, setIsPushingToPos] = useState(false);
   const [toastMsg, setToastMsg] = useState('');
+  const [toastType, setToastType] = useState('success');
+  const [contentKey, setContentKey] = useState(0); // for fade animation on tab switch
   const [cloudSyncState, setCloudSyncState] = useState({
     isSyncing: false,
     lastSyncTime: null,
@@ -30,18 +34,25 @@ export default function ManagerWebPortal({ currentUser, onLogout, theme, setThem
     lastWebPushTime: null
   });
 
-  const showToast = (msg) => {
+  const showToast = useCallback((msg, type = 'success') => {
     setToastMsg(msg);
-    setTimeout(() => setToastMsg(''), 4000);
-  };
+    setToastType(type);
+    setTimeout(() => setToastMsg(''), 5000);
+  }, []);
+
+  const handleTabChange = useCallback((tabId) => {
+    setActiveTab(tabId);
+    setContentKey(prev => prev + 1);
+    setSidebarOpen(false);
+  }, []);
 
   const handlePushToPos = async () => {
     setIsPushingToPos(true);
     try {
       await cloudSyncService.pushWebChanges();
-      showToast('✓ Successfully pushed to POS! Once connected to Wi-Fi, the POS app will automatically apply your edits.');
+      showToast('Changes pushed to POS successfully. The tablet will sync when connected to the internet.', 'success');
     } catch (err) {
-      showToast(`Push failed: ${err.message}`);
+      showToast(`Push failed: ${err.message}`, 'error');
     } finally {
       setIsPushingToPos(false);
     }
@@ -53,14 +64,15 @@ export default function ManagerWebPortal({ currentUser, onLogout, theme, setThem
   const ingredients = useLiveQuery(() => db.ingredients.toArray()) || [];
   const isSuperAdmin = currentUser?.role === 'super_admin';
 
-  // Calculate today's quick summary
+  // Today's quick summary
   const todayStart = new Date();
   todayStart.setHours(0, 0, 0, 0);
   const todayOrders = orders.filter(o => o.timestamp >= todayStart.getTime() && o.status === 'completed');
   const todayRevenue = todayOrders.reduce((sum, o) => sum + (o.total || 0), 0);
   const lowStockCount = ingredients.filter(i => (i.currentStock || 0) <= (i.safetyThreshold || 0)).length;
+  const currency = settings?.currency || '₱';
 
-  // Subscribe to cloud sync updates
+  // Subscribe to cloud sync
   useEffect(() => {
     const unsub = cloudSyncService.subscribe(setCloudSyncState);
     return unsub;
@@ -68,7 +80,7 @@ export default function ManagerWebPortal({ currentUser, onLogout, theme, setThem
 
   // Format relative sync time
   const getRelativeSyncTime = () => {
-    if (!cloudSyncState.lastSyncTime) return 'Never synced';
+    if (!cloudSyncState.lastSyncTime) return 'Never';
     const diffSec = Math.floor((Date.now() - cloudSyncState.lastSyncTime) / 1000);
     if (diffSec < 15) return 'Just now';
     if (diffSec < 60) return `${diffSec}s ago`;
@@ -79,278 +91,321 @@ export default function ManagerWebPortal({ currentUser, onLogout, theme, setThem
 
   const navSections = [
     {
-      title: 'Store Performance',
+      title: 'Analytics',
       items: [
-        { id: 'dashboard', label: 'Overview & Analytics', icon: BarChart3, badge: null },
-        { id: 'sales', label: 'Orders & Receipts', icon: Receipt, badge: todayOrders.length > 0 ? `${todayOrders.length}` : null },
+        { id: 'dashboard', label: 'Overview', icon: BarChart3, desc: 'Sales & performance' },
+        { id: 'sales', label: 'Transactions', icon: Receipt, desc: 'Order history', badge: todayOrders.length > 0 ? todayOrders.length : null },
       ]
     },
     {
-      title: 'Catalog & Inventory',
+      title: 'Operations',
       items: [
-        { id: 'inventory', label: 'Inventory & Stocks', icon: Package, badge: lowStockCount > 0 ? `${lowStockCount} low` : null, badgeColor: 'bg-red-500/10 text-red-500' },
-        { id: 'menu', label: 'Menu & Pricing', icon: UtensilsCrossed, badge: products.length > 0 ? `${products.length} items` : null },
+        { id: 'inventory', label: 'Inventory', icon: Package, desc: 'Stock levels', badge: lowStockCount > 0 ? lowStockCount : null, badgeColor: 'danger' },
+        { id: 'menu', label: 'Menu', icon: UtensilsCrossed, desc: 'Products & pricing', badge: products.length > 0 ? products.length : null },
       ]
     },
     {
-      title: 'Administration',
+      title: 'System',
       items: [
-        ...(isSuperAdmin ? [{ id: 'admin', label: 'Staff & Security', icon: Crown, badge: 'Super Admin' }] : []),
-        { id: 'settings', label: 'Store Settings', icon: SettingsIcon, badge: null },
-        { id: 'account', label: 'My Account', icon: User, badge: null },
+        ...(isSuperAdmin ? [{ id: 'admin', label: 'Administration', icon: Crown, desc: 'Staff & security' }] : []),
+        { id: 'settings', label: 'Settings', icon: SettingsIcon, desc: 'Store config' },
+        { id: 'account', label: 'Account', icon: User, desc: 'Profile & preferences' },
       ]
     }
   ];
 
-  // Flat lookup for active tab label + subtitle
   const allNavItems = navSections.flatMap(s => s.items);
   const activeNavItem = allNavItems.find(i => i.id === activeTab);
-  const tabSubtitles = {
-    dashboard: 'Real-time analytics and sales performance from your POS terminals',
-    sales: 'Complete order history, receipts, and transaction logs',
-    inventory: 'Track raw ingredients, stock levels, and supply alerts',
-    menu: 'Manage your product catalog, pricing, and categories',
-    admin: 'Staff accounts, roles, security settings, and audit trail',
-    settings: 'Store configuration, tax rates, and payment methods',
-    account: 'Your profile, password, and notification preferences',
-  };
+  const activeSection = navSections.find(s => s.items.some(i => i.id === activeTab));
 
   return (
-    <div className="flex h-screen bg-[#faf7f2] dark:bg-[#110e0c] text-text-main overflow-hidden font-sans">
-      {/* Sidebar Overlay for Mobile */}
+    <div className="web-portal flex h-screen bg-background text-text-main overflow-hidden font-sans">
+
+      {/* ── Mobile Sidebar Overlay ── */}
       {sidebarOpen && (
-        <div 
-          className="fixed inset-0 z-40 bg-black/60 backdrop-blur-sm lg:hidden transition-opacity animate-in fade-in"
+        <div
+          className="fixed inset-0 z-40 bg-black/50 backdrop-blur-sm lg:hidden"
           onClick={() => setSidebarOpen(false)}
         />
       )}
 
-      {/* Desktop / Collapsible Sidebar */}
+      {/* ── Sidebar ── */}
       <aside className={`
         fixed lg:static inset-y-0 left-0 z-50
-        w-72 bg-surface dark:bg-[#171310] border-r border-border
-        flex flex-col justify-between
-        transition-transform duration-300 ease-in-out
-        ${sidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}
-        shadow-2xl lg:shadow-none
+        w-[280px] bg-surface border-r border-border
+        flex flex-col
+        transition-transform duration-300 ease-[cubic-bezier(0.4,0,0.2,1)]
+        ${sidebarOpen ? 'translate-x-0 shadow-2xl' : '-translate-x-full lg:translate-x-0'}
       `}>
+
         {/* Sidebar Header */}
-        <div className="p-5 border-b border-border/80">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              {settings?.logoDataUrl ? (
-                <img src={settings.logoDataUrl} alt="Logo" className="w-10 h-10 rounded-xl object-cover shadow-md" />
-              ) : (
-                <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-amber-600 to-orange-500 flex items-center justify-center text-white shadow-md shadow-amber-500/20">
-                  <Coffee size={20} />
-                </div>
-              )}
-              <div className="min-w-0">
-                <h1 className="font-bold text-base tracking-tight truncate leading-tight">
-                  {settings?.cafeName || 'Aster POS'}
-                </h1>
-                <div className="flex items-center gap-1.5 mt-0.5">
-                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-amber-600 dark:text-amber-400">
-                    Manager Portal
-                  </span>
-                </div>
+        <div className="h-16 px-5 flex items-center justify-between border-b border-border flex-shrink-0">
+          <div className="flex items-center gap-3 min-w-0">
+            {settings?.logoDataUrl ? (
+              <img src={settings.logoDataUrl} alt="Logo" className="w-9 h-9 rounded-xl object-cover ring-2 ring-border" />
+            ) : (
+              <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-amber-600 to-orange-500 flex items-center justify-center text-white shadow-sm">
+                <Coffee size={18} />
               </div>
+            )}
+            <div className="min-w-0">
+              <h1 className="font-bold text-sm tracking-tight truncate leading-tight text-text-main">
+                {settings?.cafeName || 'Aster POS'}
+              </h1>
+              <span className="text-[9px] font-bold uppercase tracking-[0.1em] text-primary">
+                Manager Portal
+              </span>
             </div>
-            <button 
-              onClick={() => setSidebarOpen(false)}
-              className="lg:hidden w-8 h-8 rounded-lg flex items-center justify-center text-text-light hover:bg-surface-hover"
-            >
-              <X size={18} />
-            </button>
           </div>
+          <button
+            onClick={() => setSidebarOpen(false)}
+            className="lg:hidden w-8 h-8 rounded-lg flex items-center justify-center text-text-light hover:bg-surface-hover hover:text-text-main transition-colors"
+          >
+            <X size={16} />
+          </button>
         </div>
 
-        {/* Navigation Sections */}
-        <div className="flex-1 overflow-y-auto px-3 py-4 space-y-5">
+        {/* Navigation */}
+        <nav className="flex-1 overflow-y-auto py-4 px-3 space-y-6">
           {navSections.map((section, sIdx) => (
-            <div key={sIdx} className="space-y-1">
-              <div className="text-[10px] font-bold uppercase tracking-wider text-text-light/70 px-3 mb-1.5">
+            <div key={sIdx}>
+              <div className="text-[10px] font-bold uppercase tracking-[0.12em] text-text-light/60 px-3 mb-2">
                 {section.title}
               </div>
-              {section.items.map(item => {
-                const Icon = item.icon;
-                const isActive = activeTab === item.id;
-                return (
-                  <button
-                    key={item.id}
-                    onClick={() => {
-                      setActiveTab(item.id);
-                      setSidebarOpen(false);
-                    }}
-                    className={`
-                      w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl font-medium text-xs sm:text-sm transition-all
-                      ${isActive 
-                        ? 'bg-primary text-white shadow-md shadow-primary/25 font-semibold' 
-                        : 'text-text-light hover:text-text-main hover:bg-surface-hover'}
-                    `}
-                  >
-                    <div className="flex items-center gap-3">
-                      <Icon size={18} className={isActive ? 'text-white' : 'text-text-light'} />
-                      <span>{item.label}</span>
-                    </div>
-                    {item.badge && (
-                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
-                        item.badgeColor || (isActive ? 'bg-white/20 text-white' : 'bg-primary/10 text-primary')
+              <div className="space-y-0.5">
+                {section.items.map(item => {
+                  const Icon = item.icon;
+                  const isActive = activeTab === item.id;
+                  return (
+                    <button
+                      key={item.id}
+                      onClick={() => handleTabChange(item.id)}
+                      className={`
+                        w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-left transition-all duration-150 group
+                        ${isActive
+                          ? 'bg-primary text-white shadow-md shadow-primary/20'
+                          : 'text-text-light hover:text-text-main hover:bg-surface-hover'}
+                      `}
+                    >
+                      <div className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 transition-colors ${
+                        isActive ? 'bg-white/15' : 'bg-surface-hover group-hover:bg-border'
                       }`}>
-                        {item.badge}
-                      </span>
-                    )}
-                  </button>
-                );
-              })}
+                        <Icon size={16} className={isActive ? 'text-white' : 'text-text-light group-hover:text-text-main'} />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className={`text-[13px] font-semibold leading-tight ${isActive ? 'text-white' : ''}`}>
+                          {item.label}
+                        </div>
+                        <div className={`text-[10px] mt-0.5 leading-tight ${isActive ? 'text-white/70' : 'text-text-light/70'}`}>
+                          {item.desc}
+                        </div>
+                      </div>
+                      {item.badge != null && (
+                        <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-md flex-shrink-0 ${
+                          item.badgeColor === 'danger'
+                            ? (isActive ? 'bg-red-400/30 text-white' : 'bg-red-500/10 text-red-500')
+                            : (isActive ? 'bg-white/20 text-white' : 'bg-primary/10 text-primary')
+                        }`}>
+                          {item.badge}
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
           ))}
-        </div>
+        </nav>
 
-        {/* Sidebar Footer: Cloud Sync Widget & User Profile */}
-        <div className="p-4 border-t border-border/80 space-y-3 bg-surface-hover/30">
-          {/* Cloud Sync Status Box */}
-          <div className="p-3 bg-surface rounded-xl border border-border shadow-xs space-y-2">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <span className={`w-2.5 h-2.5 rounded-full ${cloudSyncState.isSyncing ? 'bg-amber-500 animate-ping' : 'bg-emerald-500'}`} />
-                <span className="text-xs font-semibold text-text-main">
-                  {cloudSyncState.isSyncing ? 'Pulling POS Data...' : 'Live POS Relay'}
-                </span>
-              </div>
-              <button
-                onClick={() => cloudSyncService.pullCloudData()}
-                disabled={cloudSyncState.isSyncing}
-                className="w-7 h-7 rounded-lg flex items-center justify-center text-text-light hover:text-primary hover:bg-primary/10 transition-colors disabled:opacity-50"
-                title="Fetch latest transactions from POS"
-              >
-                <RefreshCw size={13} className={cloudSyncState.isSyncing ? 'animate-spin text-amber-500' : ''} />
-              </button>
+        {/* Sidebar Footer */}
+        <div className="border-t border-border p-3 space-y-2.5 flex-shrink-0 bg-surface-hover/30">
+
+          {/* Sync Status Compact */}
+          <div className="flex items-center justify-between px-2 py-1.5">
+            <div className="flex items-center gap-2">
+              <span className={`w-2 h-2 rounded-full flex-shrink-0 ${
+                cloudSyncState.isSyncing ? 'bg-amber-500 animate-pulse' : 'bg-emerald-500'
+              }`} />
+              <span className="text-[11px] font-medium text-text-light">
+                {cloudSyncState.isSyncing ? 'Syncing...' : `Synced ${getRelativeSyncTime()}`}
+              </span>
             </div>
-            <div className="flex items-center justify-between text-[11px] text-text-light">
-              <span>Last update:</span>
-              <span className="font-medium text-text-main">{getRelativeSyncTime()}</span>
-            </div>
+            <button
+              onClick={() => cloudSyncService.pullCloudData()}
+              disabled={cloudSyncState.isSyncing}
+              className="w-7 h-7 rounded-lg flex items-center justify-center text-text-light hover:text-primary hover:bg-primary/10 transition-colors disabled:opacity-40"
+              title="Refresh POS data"
+            >
+              <RefreshCw size={12} className={cloudSyncState.isSyncing ? 'animate-spin' : ''} />
+            </button>
           </div>
 
-          {/* User Profile & Logout */}
-          <div className="flex items-center justify-between pt-1">
+          {/* User Profile */}
+          <div className="flex items-center justify-between bg-surface rounded-xl border border-border px-3 py-2.5">
             <div className="flex items-center gap-2.5 min-w-0">
-              <div className="w-9 h-9 rounded-full bg-gradient-to-tr from-amber-600 to-primary text-white flex items-center justify-center font-bold text-xs shadow-sm">
-                {currentUser?.name?.charAt(0) || 'M'}
+              <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-amber-600 to-primary text-white flex items-center justify-center font-bold text-xs flex-shrink-0">
+                {currentUser?.name?.charAt(0)?.toUpperCase() || 'M'}
               </div>
               <div className="min-w-0">
-                <p className="text-xs font-bold text-text-main truncate leading-tight">{currentUser?.name}</p>
-                <p className="text-[10px] text-text-light font-medium uppercase tracking-wide truncate">
+                <p className="text-xs font-semibold text-text-main truncate leading-tight">{currentUser?.name}</p>
+                <p className="text-[10px] text-text-light font-medium truncate">
                   {ROLE_LABELS[currentUser?.role] || 'Manager'}
                 </p>
               </div>
             </div>
             <button
               onClick={onLogout}
-              className="p-2 rounded-lg text-red-500 hover:bg-red-500/10 transition-colors"
+              className="w-8 h-8 rounded-lg flex items-center justify-center text-text-light hover:text-red-500 hover:bg-red-500/10 transition-colors"
               title="Sign Out"
             >
-              <LogOut size={16} />
+              <LogOut size={14} />
             </button>
           </div>
         </div>
       </aside>
 
-      {/* Main Content Area */}
-      <div className="flex-1 flex flex-col h-screen overflow-hidden">
-        {/* Executive Top Bar */}
-        <header className="h-16 bg-surface dark:bg-[#171310] border-b border-border px-4 sm:px-6 flex items-center justify-between shadow-xs z-10">
-          <div className="flex items-center gap-3">
+      {/* ── Main Content ── */}
+      <div className="flex-1 flex flex-col h-screen overflow-hidden min-w-0">
+
+        {/* Top Bar */}
+        <header className="h-14 bg-surface border-b border-border px-4 lg:px-6 flex items-center justify-between flex-shrink-0 z-10">
+
+          {/* Left: Hamburger + Breadcrumb */}
+          <div className="flex items-center gap-3 min-w-0">
             <button
               onClick={() => setSidebarOpen(true)}
-              className="lg:hidden w-10 h-10 rounded-xl bg-surface-hover border border-border flex items-center justify-center text-text-main"
+              className="lg:hidden w-9 h-9 rounded-lg bg-surface-hover border border-border flex items-center justify-center text-text-main hover:bg-border transition-colors flex-shrink-0"
             >
-              <Menu size={20} />
+              <Menu size={18} />
             </button>
-            <div>
-              <h2 className="text-base sm:text-lg font-bold text-text-main tracking-tight flex items-center gap-2">
-                {activeNavItem?.label || 'Overview & Analytics'}
+
+            {/* Breadcrumb */}
+            <div className="flex items-center gap-1.5 min-w-0">
+              <span className="text-xs font-medium text-text-light hidden sm:inline">
+                {activeSection?.title || 'Dashboard'}
+              </span>
+              <ChevronRight size={12} className="text-text-light/50 hidden sm:block flex-shrink-0" />
+              <h2 className="text-sm font-bold text-text-main truncate">
+                {activeNavItem?.label || 'Overview'}
               </h2>
-              <p className="text-[11px] text-text-light hidden sm:block">
-                {tabSubtitles[activeTab] || 'Store performance & remote controls synced live from POS'}
-              </p>
             </div>
           </div>
 
-          {/* Top Bar Actions */}
-          <div className="flex items-center gap-2 sm:gap-3">
-            {/* Quick Live Sales Pill */}
-            <div className="hidden md:flex items-center gap-2 px-3.5 py-1.5 bg-emerald-500/10 border border-emerald-500/20 rounded-xl">
-              <span className="w-2 h-2 rounded-full bg-emerald-500" />
-              <span className="text-xs font-semibold text-emerald-700 dark:text-emerald-400">
-                Today: {settings?.currency || '₱'}{todayRevenue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+          {/* Right: Actions */}
+          <div className="flex items-center gap-2">
+
+            {/* Live Revenue Pill — desktop only */}
+            <div className="hidden xl:flex items-center gap-2 px-3 py-1.5 bg-emerald-500/8 border border-emerald-500/15 rounded-lg">
+              <TrendingUp size={13} className="text-emerald-600 dark:text-emerald-400" />
+              <span className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-400">
+                {currency}{todayRevenue.toLocaleString(undefined, { minimumFractionDigits: 2 })}
               </span>
-              <span className="text-[11px] text-emerald-600/70 dark:text-emerald-400/70 font-medium">
-                ({todayOrders.length} {todayOrders.length === 1 ? 'sale' : 'sales'})
+              <span className="text-[10px] text-emerald-600/60 dark:text-emerald-400/60 font-medium">
+                today
               </span>
             </div>
 
-            {/* Push Changes to POS Button */}
+            {/* Low Stock Alert — desktop only */}
+            {lowStockCount > 0 && (
+              <button
+                onClick={() => handleTabChange('inventory')}
+                className="hidden lg:flex items-center gap-1.5 px-2.5 py-1.5 bg-red-500/8 border border-red-500/15 rounded-lg text-red-600 dark:text-red-400 hover:bg-red-500/15 transition-colors"
+              >
+                <AlertTriangle size={13} />
+                <span className="text-[11px] font-semibold">{lowStockCount} low stock</span>
+              </button>
+            )}
+
+            {/* Push to POS */}
             <button
               onClick={handlePushToPos}
               disabled={isPushingToPos}
-              className="flex items-center gap-1.5 px-3.5 py-1.5 bg-primary hover:bg-primary-dark text-white rounded-xl text-xs font-bold transition-all shadow-md shadow-primary/20 active:scale-95 disabled:opacity-50"
-              title="Transmit current menu, prices, stocks & staff to the POS app"
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-primary hover:bg-primary-dark text-white rounded-lg text-[11px] font-bold transition-all active:scale-[0.97] disabled:opacity-50 shadow-sm"
+              title="Push changes to POS tablet"
             >
-              <RefreshCw size={14} className={isPushingToPos ? 'animate-spin' : ''} />
-              <span>{isPushingToPos ? 'Pushing to POS...' : 'Push Edits to POS'}</span>
+              <Upload size={13} className={isPushingToPos ? 'animate-spin' : ''} />
+              <span className="hidden sm:inline">{isPushingToPos ? 'Pushing...' : 'Push to POS'}</span>
             </button>
 
-            {/* Quick Manual Sync Button */}
+            {/* Pull Sales */}
             <button
               onClick={() => cloudSyncService.pullCloudData()}
               disabled={cloudSyncState.isSyncing}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-surface-hover hover:bg-border text-text-main border border-border rounded-xl text-xs font-semibold transition-all"
-              title="Refresh live sales data from POS"
+              className="flex items-center gap-1.5 px-2.5 py-1.5 bg-surface-hover hover:bg-border text-text-main border border-border rounded-lg text-[11px] font-semibold transition-all"
+              title="Fetch latest sales from POS"
             >
-              <RefreshCw size={14} className={cloudSyncState.isSyncing ? 'animate-spin text-amber-500' : ''} />
-              <span className="hidden sm:inline">Fetch Sales</span>
+              <Download size={13} className={cloudSyncState.isSyncing ? 'animate-spin text-amber-500' : ''} />
+              <span className="hidden md:inline">{cloudSyncState.isSyncing ? 'Syncing...' : 'Fetch Sales'}</span>
             </button>
 
             {/* Theme Toggle */}
-            <div className="flex items-center bg-surface-hover border border-border rounded-xl p-0.5">
-              <button 
-                onClick={() => setTheme('theme-light')} 
-                className={`p-1.5 rounded-lg transition-colors ${theme === 'theme-light' ? 'bg-primary text-white shadow' : 'text-text-light hover:text-text-main'}`}
-                title="Light Theme"
-              >
-                <Sun size={15} />
-              </button>
-              <button 
-                onClick={() => setTheme('theme-gray')} 
-                className={`p-1.5 rounded-lg transition-colors ${theme === 'theme-gray' ? 'bg-primary text-white shadow' : 'text-text-light hover:text-text-main'}`}
-                title="Charcoal Theme"
-              >
-                <Monitor size={15} />
-              </button>
-              <button 
-                onClick={() => setTheme('theme-dark')} 
-                className={`p-1.5 rounded-lg transition-colors ${theme === 'theme-dark' ? 'bg-primary text-white shadow' : 'text-text-light hover:text-text-main'}`}
-                title="Dark Theme"
-              >
-                <Moon size={15} />
-              </button>
+            <div className="hidden sm:flex items-center bg-surface-hover border border-border rounded-lg p-0.5">
+              {[
+                { key: 'theme-light', icon: Sun, title: 'Light' },
+                { key: 'theme-gray', icon: Monitor, title: 'Charcoal' },
+                { key: 'theme-dark', icon: Moon, title: 'Dark' },
+              ].map(t => {
+                const ThemeIcon = t.icon;
+                return (
+                  <button
+                    key={t.key}
+                    onClick={() => setTheme(t.key)}
+                    className={`p-1.5 rounded-md transition-all ${
+                      theme === t.key
+                        ? 'bg-primary text-white shadow-sm'
+                        : 'text-text-light hover:text-text-main'
+                    }`}
+                    title={t.title}
+                  >
+                    <ThemeIcon size={13} />
+                  </button>
+                );
+              })}
             </div>
           </div>
         </header>
 
-        {/* Viewport Content */}
-        <main className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8 bg-background relative">
-          {/* Floating Toast Notification */}
+        {/* Content Viewport */}
+        <main className="flex-1 min-h-0 flex flex-col bg-background relative overflow-hidden">
+
+          {/* Toast */}
           {toastMsg && (
-            <div className="fixed top-20 right-6 z-50 bg-emerald-600 text-white px-4 py-2.5 rounded-xl shadow-xl text-xs font-semibold flex items-center gap-2 animate-in slide-in-from-top-2">
-              <span>{toastMsg}</span>
+            <div className={`fixed top-4 right-4 z-50 max-w-sm px-4 py-3 rounded-xl shadow-xl text-xs font-semibold flex items-center gap-2.5 animate-slide-in-right ${
+              toastType === 'error'
+                ? 'bg-red-600 text-white'
+                : 'bg-emerald-600 text-white'
+            }`}>
+              {toastType === 'error' ? <AlertTriangle size={14} /> : <RefreshCw size={14} />}
+              <span className="leading-snug">{toastMsg}</span>
+              <button onClick={() => setToastMsg('')} className="ml-auto w-5 h-5 rounded flex items-center justify-center hover:bg-white/20 flex-shrink-0">
+                <X size={12} />
+              </button>
             </div>
           )}
 
-          <div className="max-w-7xl mx-auto h-full">
+          {/* Mobile Revenue Bar (visible on small screens only) */}
+          <div className="xl:hidden border-b border-border bg-surface px-4 py-2 flex items-center justify-between flex-shrink-0">
+            <div className="flex items-center gap-3">
+              <div className="flex items-center gap-1.5">
+                <TrendingUp size={14} className="text-emerald-600 dark:text-emerald-400" />
+                <span className="text-xs font-bold text-text-main">
+                  {currency}{todayRevenue.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                </span>
+              </div>
+              <span className="text-[10px] text-text-light font-medium">
+                {todayOrders.length} {todayOrders.length === 1 ? 'sale' : 'sales'} today
+              </span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <span className={`w-1.5 h-1.5 rounded-full ${cloudSyncState.isSyncing ? 'bg-amber-500 animate-pulse' : 'bg-emerald-500'}`} />
+              <span className="text-[10px] text-text-light font-medium">
+                {cloudSyncState.isSyncing ? 'Syncing' : getRelativeSyncTime()}
+              </span>
+            </div>
+          </div>
+
+          {/* Page Content: full height flex container so views with h-full and inner lists scroll properly across all screen dimensions */}
+          <div key={contentKey} className="flex-1 min-h-0 flex flex-col animate-fade-up overflow-hidden">
             {activeTab === 'dashboard' && <Dashboard />}
             {activeTab === 'sales' && <SalesHistory currentUser={currentUser} />}
             {activeTab === 'inventory' && <InventoryManager currentUser={currentUser} />}
