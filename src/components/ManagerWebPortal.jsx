@@ -17,7 +17,7 @@ import SuperAdminSettings from './SuperAdminSettings';
 import Settings from './Settings';
 import AccountSettings from './AccountSettings';
 
-export default function ManagerWebPortal({ currentUser, onLogout, theme, setTheme, onSwitchToPos }) {
+export default function ManagerWebPortal({ currentUser, onLogout, theme, setTheme }) {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [isPushingToPos, setIsPushingToPos] = useState(false);
@@ -49,6 +49,8 @@ export default function ManagerWebPortal({ currentUser, onLogout, theme, setThem
 
   const settings = useLiveQuery(() => db.app_settings.get('default')) || {};
   const orders = useLiveQuery(() => db.orders.toArray()) || [];
+  const products = useLiveQuery(() => db.products.toArray()) || [];
+  const ingredients = useLiveQuery(() => db.ingredients.toArray()) || [];
   const isSuperAdmin = currentUser?.role === 'super_admin';
 
   // Calculate today's quick summary
@@ -56,6 +58,7 @@ export default function ManagerWebPortal({ currentUser, onLogout, theme, setThem
   todayStart.setHours(0, 0, 0, 0);
   const todayOrders = orders.filter(o => o.timestamp >= todayStart.getTime() && o.status === 'completed');
   const todayRevenue = todayOrders.reduce((sum, o) => sum + (o.total || 0), 0);
+  const lowStockCount = ingredients.filter(i => (i.currentStock || 0) <= (i.safetyThreshold || 0)).length;
 
   // Subscribe to cloud sync updates
   useEffect(() => {
@@ -74,15 +77,43 @@ export default function ManagerWebPortal({ currentUser, onLogout, theme, setThem
     return new Date(cloudSyncState.lastSyncTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   };
 
-  const navItems = [
-    { id: 'dashboard', label: 'Overview & Analytics', icon: BarChart3, badge: null },
-    { id: 'sales', label: 'Orders & Receipts', icon: Receipt, badge: todayOrders.length > 0 ? `${todayOrders.length}` : null },
-    { id: 'inventory', label: 'Inventory & Stocks', icon: Package, badge: null },
-    { id: 'menu', label: 'Menu & Catalog', icon: UtensilsCrossed, badge: null },
-    ...(isSuperAdmin ? [{ id: 'admin', label: 'Staff & Security', icon: Crown, badge: 'Admin' }] : []),
-    { id: 'settings', label: 'Store Settings', icon: SettingsIcon, badge: null },
-    { id: 'account', label: 'My Account', icon: User, badge: null },
+  const navSections = [
+    {
+      title: 'Store Performance',
+      items: [
+        { id: 'dashboard', label: 'Overview & Analytics', icon: BarChart3, badge: null },
+        { id: 'sales', label: 'Orders & Receipts', icon: Receipt, badge: todayOrders.length > 0 ? `${todayOrders.length}` : null },
+      ]
+    },
+    {
+      title: 'Catalog & Inventory',
+      items: [
+        { id: 'inventory', label: 'Inventory & Stocks', icon: Package, badge: lowStockCount > 0 ? `${lowStockCount} low` : null, badgeColor: 'bg-red-500/10 text-red-500' },
+        { id: 'menu', label: 'Menu & Pricing', icon: UtensilsCrossed, badge: products.length > 0 ? `${products.length} items` : null },
+      ]
+    },
+    {
+      title: 'Administration',
+      items: [
+        ...(isSuperAdmin ? [{ id: 'admin', label: 'Staff & Security', icon: Crown, badge: 'Super Admin' }] : []),
+        { id: 'settings', label: 'Store Settings', icon: SettingsIcon, badge: null },
+        { id: 'account', label: 'My Account', icon: User, badge: null },
+      ]
+    }
   ];
+
+  // Flat lookup for active tab label + subtitle
+  const allNavItems = navSections.flatMap(s => s.items);
+  const activeNavItem = allNavItems.find(i => i.id === activeTab);
+  const tabSubtitles = {
+    dashboard: 'Real-time analytics and sales performance from your POS terminals',
+    sales: 'Complete order history, receipts, and transaction logs',
+    inventory: 'Track raw ingredients, stock levels, and supply alerts',
+    menu: 'Manage your product catalog, pricing, and categories',
+    admin: 'Staff accounts, roles, security settings, and audit trail',
+    settings: 'Store configuration, tax rates, and payment methods',
+    account: 'Your profile, password, and notification preferences',
+  };
 
   return (
     <div className="flex h-screen bg-[#faf7f2] dark:bg-[#110e0c] text-text-main overflow-hidden font-sans">
@@ -135,42 +166,46 @@ export default function ManagerWebPortal({ currentUser, onLogout, theme, setThem
           </div>
         </div>
 
-        {/* Navigation Items */}
-        <div className="flex-1 overflow-y-auto px-3.5 py-4 space-y-1">
-          <div className="text-[10px] font-bold uppercase tracking-wider text-text-light/70 px-3 mb-2">
-            Management &amp; Controls
-          </div>
-          {navItems.map(item => {
-            const Icon = item.icon;
-            const isActive = activeTab === item.id;
-            return (
-              <button
-                key={item.id}
-                onClick={() => {
-                  setActiveTab(item.id);
-                  setSidebarOpen(false);
-                }}
-                className={`
-                  w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl font-medium text-xs sm:text-sm transition-all
-                  ${isActive 
-                    ? 'bg-primary text-white shadow-md shadow-primary/25 font-semibold' 
-                    : 'text-text-light hover:text-text-main hover:bg-surface-hover'}
-                `}
-              >
-                <div className="flex items-center gap-3">
-                  <Icon size={18} className={isActive ? 'text-white' : 'text-text-light'} />
-                  <span>{item.label}</span>
-                </div>
-                {item.badge && (
-                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
-                    isActive ? 'bg-white/20 text-white' : 'bg-primary/10 text-primary'
-                  }`}>
-                    {item.badge}
-                  </span>
-                )}
-              </button>
-            );
-          })}
+        {/* Navigation Sections */}
+        <div className="flex-1 overflow-y-auto px-3 py-4 space-y-5">
+          {navSections.map((section, sIdx) => (
+            <div key={sIdx} className="space-y-1">
+              <div className="text-[10px] font-bold uppercase tracking-wider text-text-light/70 px-3 mb-1.5">
+                {section.title}
+              </div>
+              {section.items.map(item => {
+                const Icon = item.icon;
+                const isActive = activeTab === item.id;
+                return (
+                  <button
+                    key={item.id}
+                    onClick={() => {
+                      setActiveTab(item.id);
+                      setSidebarOpen(false);
+                    }}
+                    className={`
+                      w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl font-medium text-xs sm:text-sm transition-all
+                      ${isActive 
+                        ? 'bg-primary text-white shadow-md shadow-primary/25 font-semibold' 
+                        : 'text-text-light hover:text-text-main hover:bg-surface-hover'}
+                    `}
+                  >
+                    <div className="flex items-center gap-3">
+                      <Icon size={18} className={isActive ? 'text-white' : 'text-text-light'} />
+                      <span>{item.label}</span>
+                    </div>
+                    {item.badge && (
+                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                        item.badgeColor || (isActive ? 'bg-white/20 text-white' : 'bg-primary/10 text-primary')
+                      }`}>
+                        {item.badge}
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          ))}
         </div>
 
         {/* Sidebar Footer: Cloud Sync Widget & User Profile */}
@@ -188,7 +223,7 @@ export default function ManagerWebPortal({ currentUser, onLogout, theme, setThem
                 onClick={() => cloudSyncService.pullCloudData()}
                 disabled={cloudSyncState.isSyncing}
                 className="w-7 h-7 rounded-lg flex items-center justify-center text-text-light hover:text-primary hover:bg-primary/10 transition-colors disabled:opacity-50"
-                title="Sync latest POS transactions now"
+                title="Fetch latest transactions from POS"
               >
                 <RefreshCw size={13} className={cloudSyncState.isSyncing ? 'animate-spin text-amber-500' : ''} />
               </button>
@@ -220,16 +255,6 @@ export default function ManagerWebPortal({ currentUser, onLogout, theme, setThem
               <LogOut size={16} />
             </button>
           </div>
-
-          {/* Switch to POS Mode link */}
-          {onSwitchToPos && (
-            <button
-              onClick={onSwitchToPos}
-              className="w-full text-center text-[10px] font-semibold text-text-light hover:text-primary transition-colors flex items-center justify-center gap-1 pt-1"
-            >
-              <ArrowLeftRight size={11} /> Switch to Cashier POS Mode
-            </button>
-          )}
         </div>
       </aside>
 
@@ -246,10 +271,10 @@ export default function ManagerWebPortal({ currentUser, onLogout, theme, setThem
             </button>
             <div>
               <h2 className="text-base sm:text-lg font-bold text-text-main tracking-tight flex items-center gap-2">
-                {navItems.find(i => i.id === activeTab)?.label || 'Overview'}
+                {activeNavItem?.label || 'Overview & Analytics'}
               </h2>
               <p className="text-[11px] text-text-light hidden sm:block">
-                Store performance &amp; remote controls synced live from POS
+                {tabSubtitles[activeTab] || 'Store performance & remote controls synced live from POS'}
               </p>
             </div>
           </div>

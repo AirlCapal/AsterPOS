@@ -1235,16 +1235,6 @@ export default function App() {
             }}
           />
 
-          {/* Quick toggle to Cashier POS mode */}
-          <div className="fixed bottom-3 right-3 z-[60]">
-            <button
-              onClick={() => togglePortalMode('pos')}
-              className="text-[11px] font-semibold bg-stone-900/80 hover:bg-stone-900 text-stone-300 hover:text-white px-3 py-1.5 rounded-lg backdrop-blur border border-white/10 shadow-lg transition-all"
-            >
-              Switch to Cashier POS (PIN Pad)
-            </button>
-          </div>
-
           {isInitializing && (
             <CuteLoadingScreen onFinished={() => setIsInitializing(false)} minDuration={10500} />
           )}
@@ -1280,15 +1270,7 @@ export default function App() {
            }
         }} />
 
-        {/* Quick toggle to Manager Web Portal */}
-        <div className="fixed bottom-3 right-3 z-[60]">
-          <button
-            onClick={() => togglePortalMode('manager_web')}
-            className="text-[11px] font-semibold bg-stone-900/80 hover:bg-stone-900 text-stone-300 hover:text-white px-3 py-1.5 rounded-lg backdrop-blur border border-white/10 shadow-lg transition-all"
-          >
-            Manager Portal (Username/Password)
-          </button>
-        </div>
+
 
         {isInitializing && (
           <CuteLoadingScreen onFinished={() => setIsInitializing(false)} minDuration={10500} />
@@ -1305,7 +1287,6 @@ export default function App() {
         onLogout={() => setCurrentUser(null)}
         theme={theme}
         setTheme={setTheme}
-        onSwitchToPos={() => togglePortalMode('pos')}
       />
     );
   }

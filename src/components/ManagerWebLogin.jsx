@@ -244,13 +244,13 @@ export default function ManagerWebLogin({ onLoginSuccess }) {
           </form>
 
           {/* Quick Default Credentials Tip */}
-          <div className="p-3.5 bg-amber-500/5 border border-amber-500/20 rounded-xl space-y-1 text-xs">
+          <div className="p-3.5 bg-amber-500/5 border border-amber-500/20 rounded-xl space-y-1.5 text-xs">
             <p className="font-bold text-amber-700 dark:text-amber-400 flex items-center gap-1.5">
-              <Sparkles size={13} /> Default Manager Accounts:
+              <Sparkles size={13} /> Default Manager Logins:
             </p>
-            <div className="text-[11px] text-text-light space-y-0.5">
-              <p>• Admin: <strong className="text-text-main">admin</strong> / Password: <strong className="text-text-main">admin123</strong> (or PIN 999900)</p>
-              <p>• Manager: <strong className="text-text-main">manager</strong> / Password: <strong className="text-text-main">manager123</strong> (or PIN 123400)</p>
+            <div className="text-[11px] text-text-light space-y-1">
+              <p>• Admin: <strong className="text-text-main">admin</strong> / Password: <strong className="text-text-main">admin123</strong></p>
+              <p>• Manager: <strong className="text-text-main">manager</strong> / Password: <strong className="text-text-main">manager123</strong></p>
             </div>
           </div>
         </div>
