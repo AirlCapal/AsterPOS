@@ -135,8 +135,8 @@ export default function SuperAdminSettings({ currentUser }) {
   const [confirmDialog, setConfirmDialog] = useState({ isOpen: false, title: '', message: '', onConfirm: null, variant: 'primary' });
 
   // Multi-Branch Cloud Sync state
-  const [branchIdentifier, setBranchIdentifier] = useState(() => cloudSyncService.getBranchKey());
-  const [cloudRelayUrl, setCloudRelayUrl] = useState(() => cloudSyncService.getGasUrl());
+  const [branchIdentifier, setBranchIdentifier] = useState(() => cloudSyncService?.getBranchKey ? cloudSyncService.getBranchKey() : 'default');
+  const [cloudRelayUrl, setCloudRelayUrl] = useState(() => cloudSyncService?.getGasUrl ? cloudSyncService.getGasUrl() : 'https://script.google.com/macros/s/AKfycbxLClbcVO3RN8tKsiyxs_RsKYNbYxQ1FonuyIMxLuu-CBpgwyEOzZDWT21tO9aXUm578w/exec');
   const [isTestingSync, setIsTestingSync] = useState(false);
   const [isSyncingNow, setIsSyncingNow] = useState(false);
   const [syncTestResult, setSyncTestResult] = useState(null);
@@ -159,12 +159,19 @@ export default function SuperAdminSettings({ currentUser }) {
       });
       setLogoPreview(settingsData.logoDataUrl || '');
       setIconPreview(settingsData.iconDataUrl || '');
+      const gasUrl = settingsData.googleAppsScriptUrl || 'https://script.google.com/macros/s/AKfycbxLClbcVO3RN8tKsiyxs_RsKYNbYxQ1FonuyIMxLuu-CBpgwyEOzZDWT21tO9aXUm578w/exec';
       setOtpGatewayForm({
-        googleAppsScriptUrl: settingsData.googleAppsScriptUrl || 'https://script.google.com/macros/s/AKfycbxLClbcVO3RN8tKsiyxs_RsKYNbYxQ1FonuyIMxLuu-CBpgwyEOzZDWT21tO9aXUm578w/exec',
+        googleAppsScriptUrl: gasUrl,
         emailWebhookUrl: settingsData.emailWebhookUrl || '',
         emailSenderAddress: settingsData.emailSenderAddress || 'airlunacreations@gmail.com',
         smsWebhookUrl: settingsData.smsWebhookUrl || ''
       });
+      if (settingsData.branchIdentifier) {
+        setBranchIdentifier(settingsData.branchIdentifier);
+      }
+      if (settingsData.googleAppsScriptUrl) {
+        setCloudRelayUrl(settingsData.googleAppsScriptUrl);
+      }
     }
   }, [settingsData]);
 

@@ -156,6 +156,14 @@ class CloudSyncService {
     return normalized;
   }
 
+  getGasUrl() {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('aster_gas_url');
+      if (saved) return saved;
+    }
+    return DEFAULT_GOOGLE_SCRIPT_URL;
+  }
+
   /**
    * Resolves endpoint URLs with local /api/sync relay fallback
    */
